@@ -1,0 +1,809 @@
+// Octera database schema
+// Translated from the Base44 prototype (19 entities) into a proper relational model.
+// Notes on translation decisions are inline — read them before changing anything.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// AUTH & USERS
+// ============================================================================
+
+enum UserRole {
+  ADMIN
+  BROKER
+  CLIENT
+  USER
+}
+
+model User {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  emailVerified     DateTime?
+  passwordHash      String
+  fullName          String?
+  role              UserRole @default(USER)
+
+  // Granular permissions — matches the Base44 `permissions` object.
+  // Stored as JSON; shape is validated by Zod in packages/shared.
+  permissions       Json?
+
+  // Stripe customer ID for billing
+  stripeCustomerId  String?  @unique
+
+  // Relations
+  domains           Domain[]
+  hostingPlans      HostingPlan[]
+  cartItems         CartItem[]
+  domainListings    DomainListing[] @relation("Seller")
+  domainOffers      DomainOffer[]
+  sellerRatings     SellerRating[]  @relation("Rated")
+  ratingsGiven      SellerRating[]  @relation("Rater")
+  brokerageRequests BrokerageRequest[] @relation("Client")
+  brokeredRequests  BrokerageRequest[] @relation("Broker")
+  notifications     Notification[]
+  notificationPrefs NotificationPreference?
+  alerts            Alert[]
+  sessions          Session[]
+  auditLogs         AuditLog[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+// Refresh token sessions. Access tokens are stateless JWTs; refresh tokens are
+// tracked here so we can revoke on logout / password change / suspicious activity.
+model Session {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken  String   @unique
+  userAgent     String?
+  ipAddress     String?
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([refreshToken])
+}
+
+// Append-only audit log. Nothing ever gets deleted from here.
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action      String   // e.g. "domain.register", "user.login", "marketplace.offer.accept"
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
+}
+
+// ============================================================================
+// DOMAINS
+// ============================================================================
+
+enum DomainStatus {
+  ACTIVE
+  PENDING
+  EXPIRED
+  TRANSFERRING
+  TRANSFER
+}
+
+enum SSLStatus {
+  NONE
+  PENDING
+  ACTIVE
+  EXPIRED
+  RENEWING
+}
+
+enum SSLType {
+  FREE
+  STANDARD
+  WILDCARD
+  EV
+}
+
+enum TransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum RegistrarProvider {
+  GIGTECH
+  GODADDY
+}
+
+model Domain {
+  id                 String         @id @default(cuid())
+  userId             String
+  user               User           @relation(fields: [userId], references: [id])
+
+  name               String         // e.g. "example" (without TLD)
+  extension          String         // e.g. "com", "net"
+  fullName           String         @unique // denormalized "example.com" for lookups
+  status             DomainStatus   @default(PENDING)
+  registrationDate   DateTime?
+  expiryDate         DateTime?
+  autoRenew          Boolean        @default(true)
+  pricePerYear       Decimal?       @db.Decimal(10, 2)
+
+  // Which upstream registrar owns this domain
+  registrar          RegistrarProvider
+  registrarDomainId  String?        // external ID at the registrar
+
+  privacyProtection  Boolean        @default(true)
+
+  // Transfer fields
+  transferCode       String?        // EPP/Auth code
+  transferStatus     TransferStatus?
+  transferDate       DateTime?
+  previousRegistrar  String?
+
+  // SSL
+  sslStatus          SSLStatus      @default(NONE)
+  sslType            SSLType?
+  sslExpiryDate      DateTime?
+  sslAutoRenew       Boolean        @default(true)
+
+  dnsRecords         DnsRecord[]
+  deploymentConfigs  DeploymentConfig[]
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([fullName])
+  @@index([status])
+  @@index([expiryDate])
+}
+
+// In Base44, DNS records were an embedded array inside Domain.
+// In Postgres we make it a proper table — better for querying, auditing, and
+// partial updates.
+enum DnsRecordType {
+  A
+  AAAA
+  CNAME
+  MX
+  TXT
+  NS
+  SRV
+}
+
+model DnsRecord {
+  id         String        @id @default(cuid())
+  domainId   String
+  domain     Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  type       DnsRecordType
+  name       String
+  value      String
+  ttl        Int           @default(3600)
+  priority   Int?          // for MX and SRV
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([domainId])
+}
+
+// ============================================================================
+// HOSTING
+// ============================================================================
+
+enum HostingStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  PENDING
+}
+
+enum HostingPlanType {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  DEDICATED
+}
+
+model HostingPlan {
+  id                String          @id @default(cuid())
+  userId            String
+  user              User            @relation(fields: [userId], references: [id])
+
+  name              String
+  status            HostingStatus   @default(PENDING)
+  planType          HostingPlanType @default(STARTER)
+
+  vcpuCores         Int?
+  ramGb             Int?
+  storageGb         Int?
+  bandwidthTb       Int?
+  pricePerMonth     Decimal?        @db.Decimal(10, 2)
+
+  nodeLocation      String?
+  ipAddress         String?
+  startDate         DateTime?
+  nextBillingDate   DateTime?
+
+  // External reference at GIG.tech
+  providerInstanceId String?
+
+  sslStatus         SSLStatus       @default(NONE)
+  sslType           SSLType?
+  sslExpiryDate     DateTime?
+  sslAutoRenew      Boolean         @default(true)
+  sslDomains        String[]
+
+  deploymentConfigs DeploymentConfig[]
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================================
+// SHOPPING CART
+// ============================================================================
+
+enum CartItemType {
+  DOMAIN
+  HOSTING
+  LISTING      // marketplace purchase
+}
+
+model CartItem {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemType       CartItemType
+  itemName       String
+  durationYears  Int          @default(1)
+  price          Decimal      @db.Decimal(10, 2)
+  details        Json?
+
+  createdAt      DateTime     @default(now())
+
+  @@index([userId])
+}
+
+// ============================================================================
+// MARKETPLACE
+// ============================================================================
+
+enum ListingType {
+  FIXED_PRICE
+  AUCTION
+  MAKE_OFFER
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  EXPIRED
+  WITHDRAWN
+}
+
+enum EscrowStatus {
+  NONE
+  PENDING
+  IN_ESCROW
+  RELEASED
+  REFUNDED
+}
+
+model DomainListing {
+  id              String         @id @default(cuid())
+  domainName      String
+  listingType     ListingType
+  price           Decimal        @db.Decimal(10, 2)
+  currentBid      Decimal?       @db.Decimal(10, 2)
+  reservePrice    Decimal?       @db.Decimal(10, 2)
+  auctionEndDate  DateTime?
+  status          ListingStatus  @default(ACTIVE)
+  description     String?
+  valuation       Decimal?       @db.Decimal(10, 2)
+
+  // Denormalized metrics for filtering/sorting — update via background job.
+  ageYears        Float?
+  monthlyTraffic  Int?
+  backlinks       Int?
+  domainAuthority Int?
+
+  sellerId        String
+  seller          User           @relation("Seller", fields: [sellerId], references: [id])
+  buyerId         String?
+
+  escrowStatus    EscrowStatus   @default(NONE)
+  stripePaymentIntentId String?
+
+  views           Int            @default(0)
+  featured        Boolean        @default(false)
+
+  offers          DomainOffer[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([auctionEndDate])
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model DomainOffer {
+  id           String        @id @default(cuid())
+  listingId    String
+  listing      DomainListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  domainName   String
+  buyerId      String
+  buyer        User          @relation(fields: [buyerId], references: [id])
+  offerAmount  Decimal       @db.Decimal(10, 2)
+  status       OfferStatus   @default(PENDING)
+  message      String?
+  expiresAt    DateTime?
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([listingId])
+  @@index([buyerId])
+  @@index([status])
+}
+
+model SellerRating {
+  id             String   @id @default(cuid())
+  sellerId       String
+  seller         User     @relation("Rated", fields: [sellerId], references: [id])
+  buyerId        String
+  buyer          User     @relation("Rater", fields: [buyerId], references: [id])
+  listingId      String?
+  rating         Int      // 1-5
+  review         String?
+  communication  Int?     // 1-5
+  transferSpeed  Int?     // 1-5
+  asDescribed    Int?     // 1-5
+
+  createdAt      DateTime @default(now())
+
+  @@unique([sellerId, buyerId, listingId])
+  @@index([sellerId])
+}
+
+// ============================================================================
+// BROKERAGE
+// ============================================================================
+
+enum BrokerageStatus {
+  SUBMITTED
+  RESEARCHING
+  NEGOTIATING
+  DUE_DILIGENCE
+  CLOSING
+  COMPLETED
+  CANCELLED
+}
+
+enum BrokeragePriority {
+  STANDARD
+  URGENT
+}
+
+model BrokerageRequest {
+  id                String              @id @default(cuid())
+  clientId          String
+  client            User                @relation("Client", fields: [clientId], references: [id])
+  brokerId          String?
+  broker            User?               @relation("Broker", fields: [brokerId], references: [id])
+
+  targetDomain      String
+  budgetMax         Decimal             @db.Decimal(10, 2)
+  status            BrokerageStatus     @default(SUBMITTED)
+  brokerNotes       String?
+  timelineDays      Int?
+  currentOffer      Decimal?            @db.Decimal(10, 2)
+  sellerResponse    String?
+  dueDiligenceReport Json?
+  priority          BrokeragePriority   @default(STANDARD)
+
+  messages          BrokerageMessage[]
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([clientId])
+  @@index([brokerId])
+  @@index([status])
+}
+
+enum MessageSenderRole {
+  CLIENT
+  BROKER
+}
+
+enum MessageType {
+  MESSAGE
+  STATUS_UPDATE
+  DOCUMENT
+}
+
+model BrokerageMessage {
+  id           String            @id @default(cuid())
+  requestId    String
+  request      BrokerageRequest  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  senderRole   MessageSenderRole
+  message      String
+  attachments  String[]
+  messageType  MessageType       @default(MESSAGE)
+
+  createdAt    DateTime          @default(now())
+
+  @@index([requestId, createdAt])
+}
+
+// ============================================================================
+// CLOUD SERVICES (v3 — all interfaces for now; real provisioning not wired)
+// ============================================================================
+
+enum K8sStatus {
+  CREATING
+  ACTIVE
+  UPGRADING
+  DELETING
+  ERROR
+}
+
+model KubernetesCluster {
+  id                String    @id @default(cuid())
+  name              String
+  status            K8sStatus @default(CREATING)
+  k8sVersion        String    @default("1.28")
+  region            String?
+  nodePools         Json?     // array of { name, nodeCount, machineType, diskSizeGb }
+  totalNodes        Int?
+  endpoint          String?
+  monitoringEnabled Boolean   @default(true)
+  autoScaling       Boolean   @default(false)
+  pricePerMonth     Decimal?  @db.Decimal(10, 2)
+  providerClusterId String?
+
+  deploymentConfigs DeploymentConfig[] @relation("K8sDeployments")
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+enum ServerlessRuntime {
+  NODEJS18
+  NODEJS20
+  PYTHON311
+  PYTHON312
+  GO121
+  RUST
+}
+
+enum ServerlessStatus {
+  DEPLOYING
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+model ServerlessFunction {
+  id               String            @id @default(cuid())
+  name             String
+  runtime          ServerlessRuntime @default(NODEJS20)
+  status           ServerlessStatus  @default(DEPLOYING)
+  memoryMb         Int               @default(256)
+  timeoutSeconds   Int               @default(30)
+  endpoint         String?
+  envVariables     Json?             // object of string -> string
+  invocationsTotal Int               @default(0)
+  invocationsMonth Int               @default(0)
+  avgDurationMs    Float?
+  lastInvoked      DateTime?
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+enum DbEngine {
+  POSTGRESQL
+  MYSQL
+  MONGODB
+  REDIS
+  CASSANDRA
+}
+
+enum DbStatus {
+  CREATING
+  ACTIVE
+  BACKING_UP
+  UPGRADING
+  ERROR
+}
+
+enum DbSize {
+  SMALL
+  MEDIUM
+  LARGE
+  XLARGE
+}
+
+model ManagedDatabase {
+  id                  String   @id @default(cuid())
+  name                String
+  engine              DbEngine @default(POSTGRESQL)
+  version             String?
+  status              DbStatus @default(CREATING)
+  size                DbSize   @default(SMALL)
+  storageGb           Int      @default(20)
+  region              String?
+  endpoint            String?
+  port                Int?
+  backupEnabled       Boolean  @default(true)
+  backupRetentionDays Int      @default(7)
+  highAvailability    Boolean  @default(false)
+  connectionsCurrent  Int      @default(0)
+  connectionsMax      Int?
+  cpuUsage            Float    @default(0)
+  memoryUsage         Float    @default(0)
+  pricePerMonth       Decimal? @db.Decimal(10, 2)
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+// ============================================================================
+// ORCHESTRATION & PIPELINES (v3)
+// ============================================================================
+
+enum DeploymentStatus {
+  DRAFT
+  DEPLOYING
+  ACTIVE
+  ERROR
+}
+
+model DeploymentConfig {
+  id            String           @id @default(cuid())
+  name          String
+  domainId      String?
+  domain        Domain?          @relation(fields: [domainId], references: [id])
+
+  hostingPlanId String?
+  hostingPlan   HostingPlan?     @relation(fields: [hostingPlanId], references: [id])
+  k8sClusterId  String?
+  k8sCluster    KubernetesCluster? @relation("K8sDeployments", fields: [k8sClusterId], references: [id])
+
+  // Loose many-to-many to serverless & databases via join tables would be cleaner —
+  // punted for now since v3. Stored as arrays for prototype parity.
+  functionIds   String[]
+  databaseIds   String[]
+
+  status        DeploymentStatus @default(DRAFT)
+  autoDeploy    Boolean          @default(false)
+  sslEnabled    Boolean          @default(true)
+  lastDeployed  DateTime?
+
+  pipelines     Pipeline[]
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+enum PipelineTrigger {
+  MANUAL
+  GIT_PUSH
+  API_WEBHOOK
+  SCHEDULED
+}
+
+enum PipelineStatus {
+  IDLE
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+model Pipeline {
+  id                 String           @id @default(cuid())
+  name               String
+  deploymentConfigId String
+  deploymentConfig   DeploymentConfig @relation(fields: [deploymentConfigId], references: [id])
+
+  deploymentTargets  Json?            // array of { type, targetId }
+  triggerType        PipelineTrigger  @default(MANUAL)
+  triggerConfig      Json?
+  buildSteps         Json?            // array of { name, command }
+  testConfig         Json?
+  rollbackConfig     Json?
+
+  status             PipelineStatus   @default(IDLE)
+  lastRun            DateTime?
+  lastDeploymentId   String?
+
+  runs               PipelineRun[]
+
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+enum PipelineRunStatus {
+  BUILDING
+  TESTING
+  DEPLOYING
+  SUCCESS
+  FAILED
+  ROLLED_BACK
+}
+
+model PipelineRun {
+  id                String            @id @default(cuid())
+  pipelineId        String
+  pipeline          Pipeline          @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  status            PipelineRunStatus @default(BUILDING)
+  triggerBy         String?
+  buildLogs         String?
+  testResults       Json?
+  deploymentSnapshot Json?
+  durationSeconds   Int?
+  errorMessage      String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([pipelineId, createdAt])
+}
+
+// ============================================================================
+// VALUATION (v2/v3 — keep stub; wire real provider later)
+// ============================================================================
+
+model ValuationReport {
+  id              String   @id @default(cuid())
+  domainName      String
+  valuationData   Json?    // { estimatedValueMin, estimatedValueMax, recommendedPrice, confidenceScore }
+  advancedMetrics Json?
+  shareToken      String?  @unique
+  isPublic        Boolean  @default(false)
+  views           Int      @default(0)
+
+  createdAt       DateTime @default(now())
+
+  @@index([domainName])
+  @@index([shareToken])
+}
+
+// ============================================================================
+// NOTIFICATIONS & ALERTS
+// ============================================================================
+
+enum NotificationType {
+  DOMAIN_EXPIRY
+  AUCTION_BID
+  AUCTION_WON
+  AUCTION_LOST
+  BROKERAGE_UPDATE
+  DEPLOYMENT_FAILURE
+  DEPLOYMENT_SUCCESS
+  ALERT_TRIGGERED
+  OFFER_RECEIVED
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Notification {
+  id        String               @id @default(cuid())
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  message   String
+  read      Boolean              @default(false)
+  priority  NotificationPriority @default(MEDIUM)
+  relatedId String?
+  actionUrl String?
+  metadata  Json?
+
+  createdAt DateTime             @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+enum DigestFrequency {
+  NONE
+  DAILY
+  WEEKLY
+}
+
+model NotificationPreference {
+  id                          String          @id @default(cuid())
+  userId                      String          @unique
+  user                        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  domainExpiryInApp           Boolean         @default(true)
+  domainExpiryEmail           Boolean         @default(true)
+  auctionBidInApp             Boolean         @default(true)
+  auctionBidEmail             Boolean         @default(false)
+  brokerageUpdateInApp        Boolean         @default(true)
+  brokerageUpdateEmail        Boolean         @default(true)
+  deploymentFailureInApp      Boolean         @default(true)
+  deploymentFailureEmail      Boolean         @default(true)
+  alertTriggeredInApp         Boolean         @default(true)
+  alertTriggeredEmail         Boolean         @default(true)
+  emailDigestFrequency        DigestFrequency @default(DAILY)
+}
+
+enum AlertServiceType {
+  HOSTING
+  KUBERNETES
+  SERVERLESS
+  DATABASE
+}
+
+enum AlertMetric {
+  CPU
+  MEMORY
+  DISK
+  BANDWIDTH
+  RESPONSE_TIME
+  ERROR_RATE
+  INVOCATIONS
+  CONNECTIONS
+}
+
+enum AlertCondition {
+  ABOVE
+  BELOW
+}
+
+model Alert {
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  serviceType   AlertServiceType
+  serviceId     String
+  metric        AlertMetric
+  threshold     Float
+  condition     AlertCondition   @default(ABOVE)
+  enabled       Boolean          @default(true)
+  lastTriggered DateTime?
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([serviceType, serviceId])
+}

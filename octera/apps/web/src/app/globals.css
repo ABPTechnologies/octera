@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    @apply bg-octera-bg text-octera-text antialiased;
+    min-height: 100%;
+  }
+
+  body {
+    font-feature-settings: 'cv11', 'ss01';
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-octera-border bg-octera-surface p-6;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-octera-gradient px-4 py-2.5
+           text-sm font-medium text-octera-bg transition hover:shadow-glow
+           focus:outline-none focus:ring-2 focus:ring-octera-cyan focus:ring-offset-2
+           focus:ring-offset-octera-bg disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-xl border border-octera-border
+           bg-transparent px-4 py-2.5 text-sm font-medium text-octera-text
+           transition hover:bg-octera-surface;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-octera-border bg-octera-bg px-4 py-2.5
+           text-sm text-octera-text placeholder:text-octera-muted
+           focus:border-octera-cyan focus:outline-none focus:ring-1 focus:ring-octera-cyan;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-octera-text;
+  }
+}

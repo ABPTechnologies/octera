@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: octera-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: octera
+      POSTGRES_PASSWORD: octera
+      POSTGRES_DB: octera
+    ports:
+      - "5432:5432"
+    volumes:
+      - octera_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U octera"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: octera-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - octera_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  octera_pg_data:
+  octera_redis_data:
