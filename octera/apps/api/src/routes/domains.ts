@@ -1,7 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '@octera/db';
-import { gigtech } from '../integrations/gigtech.js';
 
 export const domainRoutes: FastifyPluginAsync = async (app) => {
   // --- List own domains ---
@@ -14,14 +13,25 @@ export const domainRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // --- Domain availability search ---
-  // Calls GIG.tech (stubbed until real endpoint is confirmed).
+  //
+  // Deliberately returns 501 for v1. gig.tech's VCO API is not a registrar —
+  // it manages DNS + top-level domains but doesn't search or buy ICANN
+  // domains. The real implementation lands with the GoDaddy integration in
+  // v2 (see NEXT_STEPS.md § 3a). Keeping the route shape so the frontend
+  // can wire against a real URL now.
   app.get(
     '/search',
     { onRequest: [app.authenticate] },
-    async (req) => {
-      const { q } = z.object({ q: z.string().min(1).max(253) }).parse(req.query);
-      const results = await gigtech.searchDomains(q);
-      return { results };
+    async (req, reply) => {
+      const _parsed = z
+        .object({ q: z.string().min(1).max(253) })
+        .parse(req.query); // validate input even though we're not acting on it yet
+      void _parsed;
+      return reply.code(501).send({
+        error: 'not_implemented',
+        message:
+          'Domain availability search lands with the GoDaddy registrar integration in v2. gig.tech does not expose domain purchase.',
+      });
     }
   );
 

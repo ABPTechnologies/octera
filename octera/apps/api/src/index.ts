@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
@@ -9,6 +9,8 @@ import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/users.js';
 import { domainRoutes } from './routes/domains.js';
 import { healthRoutes } from './routes/health.js';
+import { vcoRoutes } from './routes/vco.js';
+import { GigtechError } from './integrations/gigtech.js';
 
 const app = Fastify({
   logger: {
@@ -51,6 +53,7 @@ async function start() {
   await app.register(authRoutes, { prefix: '/v1/auth' });
   await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(domainRoutes, { prefix: '/v1/domains' });
+  await app.register(vcoRoutes, { prefix: '/v1/vco' });
 
   // 404 handler
   app.setNotFoundHandler((req, reply) => {
@@ -58,15 +61,40 @@ async function start() {
   });
 
   // Error handler — normalize to { error, message } shape.
-  app.setErrorHandler((err, req, reply) => {
+  app.setErrorHandler<FastifyError>((err, req, reply) => {
     req.log.error({ err }, 'request failed');
+    // GIG.tech upstream errors carry their own status + code. Map 501 straight
+    // through so the client sees "not implemented" rather than "500 internal
+    // error" for deferred features. 401/403 from upstream surface as 502
+    // because they mean OUR credential is broken, not the caller's.
+    if (err instanceof GigtechError) {
+      if (err.status === 501) {
+        return reply.code(501).send({ error: err.code, message: err.message });
+      }
+      if (err.status === 401 || err.status === 403) {
+        return reply.code(502).send({
+          error: 'upstream_auth_failed',
+          message:
+            'gig.tech rejected the partner credential. Check GIGTECH_JWT in the API env.',
+        });
+      }
+      const status = err.status >= 400 && err.status < 600 ? err.status : 502;
+      return reply.code(status).send({ error: err.code, message: err.message });
+    }
     if (err.validation) {
-      return reply.code(400).send({ error: 'validation_error', message: err.message, details: err.validation });
+      return reply.code(400).send({
+        error: 'validation_error',
+        message: err.message,
+        details: err.validation,
+      });
     }
     const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
     reply.code(status).send({
       error: err.name || 'internal_error',
-      message: status === 500 && env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+      message:
+        status === 500 && env.NODE_ENV === 'production'
+          ? 'Internal server error'
+          : err.message,
     });
   });
 

@@ -34,3 +34,73 @@ export const DomainSearchResult = z.object({
   currency: z.string().optional(),
 });
 export type DomainSearchResult = z.infer<typeof DomainSearchResult>;
+
+// ---------------------------------------------------------------------------
+// VCO operator-surface types (shapes returned by /v1/vco/*).
+//
+// These mirror — but do not duplicate — the Zod schemas in
+// apps/api/src/integrations/gigtech.ts. Fields are kept intentionally narrow
+// to what the web UI actually needs to render. If the upstream shape changes
+// in a way the UI needs, add the fields here and surface them in the route.
+// ---------------------------------------------------------------------------
+
+export interface VcoStatus {
+  mode: 'mock' | 'live';
+  api_base: string;
+}
+
+export interface VcoUserCustomer {
+  customer_id: string;
+  name: string;
+  status?: string;
+}
+
+export interface VcoMe {
+  username: string;
+  email: string;
+  firstname?: string;
+  lastname?: string;
+  is_admin?: boolean;
+  vco_name?: string;
+  vco_website?: string;
+  vco_support_email?: string;
+  iam_domain?: string;
+  customers?: VcoUserCustomer[];
+  admin_of_customers?: VcoUserCustomer[];
+}
+
+export interface VcoCustomer {
+  customer_id: string;
+  name: string;
+  contact_name?: string;
+  email?: string;
+  billable?: boolean;
+  status?: string;
+  show_prices?: boolean;
+}
+
+export interface VcoDatacenter {
+  name?: string;
+  code?: string;
+  city?: string;
+  country?: string;
+  country_code?: string;
+}
+
+export interface VcoLocation {
+  name: string;
+  datacenter?: VcoDatacenter;
+  is_freemium?: boolean;
+}
+
+export interface VcoCloudspace {
+  cloudspace_id: string;
+  name: string;
+  status?: string;
+  location?: string;
+  private_network?: string;
+  external_network_ip?: string;
+  cloudspace_mode?: string;
+  creation_time?: number;
+  update_time?: number;
+}

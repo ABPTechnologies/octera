@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Logo } from '@/components/Logo';
 import { useAuth } from '@/lib/auth-context';
 
@@ -27,6 +28,14 @@ export default function DashboardPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Logo />
           <div className="flex items-center gap-4">
+            {user.role === 'ADMIN' && (
+              <Link
+                href="/admin/vco"
+                className="rounded border border-octera-cyan/40 bg-octera-cyan/10 px-2 py-0.5 font-mono text-xs uppercase tracking-wider text-octera-cyan transition hover:bg-octera-cyan/20"
+              >
+                Operator console →
+              </Link>
+            )}
             <span className="text-sm text-octera-muted">{user.email}</span>
             <button onClick={logout} className="btn-ghost">
               Log out
