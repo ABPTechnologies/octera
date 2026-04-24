@@ -118,3 +118,20 @@ export interface VcoInvoice {
   creation_timestamp: number;
   customer_reference_id?: string;
 }
+
+export interface VcoAuditLog {
+  id: string;
+  timestamp: number;
+  customer_id?: string;
+  location?: string;
+  resource_id?: string;
+  resource_type?: string;
+  user_email?: string;
+  user_name?: string;
+  username?: string;
+  method?: string;
+  path?: string;
+  status_code?: number;
+  status_text?: string;
+  response_time?: number;
+}

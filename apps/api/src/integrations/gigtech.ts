@@ -341,6 +341,40 @@ const InvoicesListSchema = z.object({
   data: z.array(InvoiceSchema),
 });
 
+// Matches swagger AuditLogs (the list-item shape). Every API call against a
+// customer's resources is logged here — useful for "who reset this VM at 2am"
+// kinds of questions.
+const AuditLogSchema = z
+  .object({
+    id: z.string(),
+    timestamp: z.number(),
+    customer_id: z.string().optional(),
+    location: z.string().optional(),
+    resource_id: z.string().optional(),
+    resource_type: z.string().optional(),
+    user_email: z.string().optional(),
+    user_name: z.string().optional(),
+    username: z.string().optional(),
+    method: z.string().optional(),
+    path: z.string().optional(),
+    status_code: z.number().optional(),
+    status_text: z.string().optional(),
+    response_time: z.number().optional(),
+  })
+  .passthrough();
+
+const AuditsListSchema = z.object({
+  pagination: z
+    .object({
+      limit: z.number().optional(),
+      pages: z.number().optional(),
+      count: z.number().optional(),
+    })
+    .partial()
+    .optional(),
+  data: z.array(AuditLogSchema),
+});
+
 // Exported TypeScript types derived from the schemas.
 export type Me = z.infer<typeof MeSchema>;
 export type CustomerSummary = z.infer<typeof CustomerSummarySchema>;
@@ -349,6 +383,7 @@ export type Cloudspace = z.infer<typeof CloudspaceSchema>;
 export type ReverseProxy = z.infer<typeof ReverseProxySchema>;
 export type CertificateSummary = z.infer<typeof CertificateSummarySchema>;
 export type Invoice = z.infer<typeof InvoiceSchema>;
+export type AuditLog = z.infer<typeof AuditLogSchema>;
 
 // ---------------------------------------------------------------------------
 // Fixtures — shape-valid canned responses for mock mode. Keep these in sync
@@ -416,6 +451,77 @@ const MOCK_INVOICES: z.infer<typeof InvoiceSchema>[] = [
     month: 2,
     creation_timestamp: Math.floor(new Date('2026-02-01T00:00:00Z').getTime() / 1000),
     customer_reference_id: '',
+  },
+];
+
+// Mock audit trail for the ABP customer — a handful of recent actions across
+// users + status codes so the operator UI has variety to render. Real audits
+// land via /customers/{cid}/audits once a partner credential is wired up.
+const MOCK_AUDITS: z.infer<typeof AuditLogSchema>[] = [
+  {
+    id: 'aud_2026_04_24_001',
+    timestamp: Math.floor(Date.now() / 1000) - 60 * 5,
+    customer_id: 'abp_technologies_1',
+    user_email: 'gerry.dekens@abptechnologies.com',
+    user_name: 'Gerry Dekens',
+    username: 'gerry.dekens',
+    method: 'GET',
+    path: '/customers/abp_technologies_1/cloudspaces',
+    status_code: 200,
+    status_text: 'OK',
+    response_time: 0.142,
+  },
+  {
+    id: 'aud_2026_04_24_002',
+    timestamp: Math.floor(Date.now() / 1000) - 60 * 47,
+    customer_id: 'abp_technologies_1',
+    user_email: 'gerry.dekens@abptechnologies.com',
+    user_name: 'Gerry Dekens',
+    username: 'gerry.dekens',
+    method: 'POST',
+    path: '/customers/abp_technologies_1/cloudspaces/cs_001/ingress/reverse-proxies/rp_42/renew-certificate',
+    status_code: 200,
+    status_text: 'OK',
+    response_time: 2.317,
+  },
+  {
+    id: 'aud_2026_04_23_010',
+    timestamp: Math.floor(Date.now() / 1000) - 60 * 60 * 18,
+    customer_id: 'abp_technologies_1',
+    user_email: 'support@octera.cloud',
+    user_name: 'Octera Support',
+    username: 'support.crew',
+    method: 'GET',
+    path: '/customers/abp_technologies_1/audits',
+    status_code: 200,
+    status_text: 'OK',
+    response_time: 0.089,
+  },
+  {
+    id: 'aud_2026_04_23_005',
+    timestamp: Math.floor(Date.now() / 1000) - 60 * 60 * 24,
+    customer_id: 'abp_technologies_1',
+    user_email: 'gerry.dekens@abptechnologies.com',
+    user_name: 'Gerry Dekens',
+    username: 'gerry.dekens',
+    method: 'PUT',
+    path: '/customers/abp_technologies_1/quota',
+    status_code: 403,
+    status_text: 'Forbidden',
+    response_time: 0.034,
+  },
+  {
+    id: 'aud_2026_04_22_012',
+    timestamp: Math.floor(Date.now() / 1000) - 60 * 60 * 48,
+    customer_id: 'abp_technologies_1',
+    user_email: 'gerry.dekens@abptechnologies.com',
+    user_name: 'Gerry Dekens',
+    username: 'gerry.dekens',
+    method: 'POST',
+    path: '/customers/abp_technologies_1/cloudspaces',
+    status_code: 200,
+    status_text: 'OK',
+    response_time: 1.871,
   },
 ];
 
@@ -624,6 +730,34 @@ export const gigtech = {
         // mock respects the path param. Keeps /iriscall_1/invoices empty as
         // a useful negative test.
         data: MOCK_INVOICES.filter((i) => i.customer_id === customerId),
+      }),
+    });
+    return res.data;
+  },
+
+  // --- Audit logs -----------------------------------------------------------
+
+  /**
+   * GET /customers/{cid}/audits — log of every API call against this
+   * customer's resources. Useful for "who deleted that VM" investigations.
+   */
+  async listCustomerAudits(
+    customerId: string,
+    opts: { limit?: number; username?: string; status_code?: number } = {}
+  ): Promise<AuditLog[]> {
+    const res = await request({
+      path: `/customers/${encodeURIComponent(customerId)}/audits`,
+      query: {
+        limit: opts.limit,
+        username: opts.username,
+        status_code: opts.status_code,
+        // Default: include reads. Toggle off if surface gets noisy.
+        include_get_requests: true,
+      },
+      schema: AuditsListSchema,
+      mock: () => ({
+        pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
+        data: MOCK_AUDITS.filter((a) => a.customer_id === customerId),
       }),
     });
     return res.data;

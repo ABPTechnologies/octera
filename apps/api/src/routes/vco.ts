@@ -159,6 +159,28 @@ export const vcoRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
+   * GET /v1/vco/customers/:customerId/audits
+   * Audit log of every API call against this customer's resources.
+   * Optional ?limit, ?username, ?status_code filters.
+   */
+  app.get<{
+    Params: { customerId: string };
+    Querystring: { limit?: string; username?: string; status_code?: string };
+  }>(
+    '/customers/:customerId/audits',
+    adminOnly,
+    async (req) => {
+      const { limit, username, status_code } = req.query;
+      const audits = await gigtech.listCustomerAudits(req.params.customerId, {
+        limit: limit ? Number.parseInt(limit, 10) : undefined,
+        username,
+        status_code: status_code ? Number.parseInt(status_code, 10) : undefined,
+      });
+      return { audits };
+    }
+  );
+
+  /**
    * GET /v1/vco/customers/:customerId/cloudspaces/:cloudspaceId/reverse-proxies
    * Ingress reverse-proxies live per-cloudspace in gig.tech. Each one can
    * have a Let's Encrypt cert that we can renew via the API.
