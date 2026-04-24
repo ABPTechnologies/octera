@@ -45,4 +45,34 @@
   .label {
     @apply mb-1.5 block text-sm font-medium text-octera-text;
   }
+
+  /* Scoped typography for /legal/* pages — readable long-form without pulling
+     in @tailwindcss/typography for just four pages. */
+  .prose-octera {
+    @apply text-octera-text;
+  }
+  .prose-octera h1 {
+    @apply mb-6 text-3xl font-semibold;
+  }
+  .prose-octera h2 {
+    @apply mb-3 mt-10 text-xl font-semibold;
+  }
+  .prose-octera h3 {
+    @apply mb-2 mt-6 text-base font-semibold;
+  }
+  .prose-octera p {
+    @apply mb-4 text-sm leading-relaxed text-octera-text/90;
+  }
+  .prose-octera ul {
+    @apply mb-4 list-disc space-y-1 pl-6 text-sm leading-relaxed text-octera-text/90;
+  }
+  .prose-octera a {
+    @apply text-octera-cyan underline-offset-2 hover:underline;
+  }
+  .prose-octera code {
+    @apply rounded bg-octera-surface px-1 py-0.5 font-mono text-xs text-octera-cyan;
+  }
+  .prose-octera strong {
+    @apply font-semibold text-octera-text;
+  }
 }

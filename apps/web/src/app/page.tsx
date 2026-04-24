@@ -1,5 +1,17 @@
+import type { Route } from 'next';
 import Link from 'next/link';
 import { Logo } from '@/components/Logo';
+
+// Typed-routes has been buggy with this particular union of literal strings
+// in page.tsx (works fine in layout.tsx, same pattern — looks like a Next 15
+// type-emit edge case). Plain strings + per-item cast at the Link site keeps
+// runtime behaviour correct. The legal pages do exist.
+const FOOTER_LEGAL_LINKS = [
+  { href: '/legal/terms', label: 'Terms' },
+  { href: '/legal/privacy', label: 'Privacy' },
+  { href: '/legal/aup', label: 'Acceptable use' },
+  { href: '/legal/cookies', label: 'Cookies' },
+] as const;
 
 export default function HomePage() {
   return (
@@ -71,8 +83,19 @@ export default function HomePage() {
       </section>
 
       <footer className="border-t border-octera-border">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-octera-muted">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-6 text-sm text-octera-muted">
           <span>&copy; {new Date().getFullYear()} Octera</span>
+          <nav className="flex flex-wrap gap-4">
+            {FOOTER_LEGAL_LINKS.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href as Route}
+                className="transition hover:text-octera-cyan"
+              >
+                {l.label}
+              </Link>
+            ))}
+          </nav>
           <span>v0.0.1</span>
         </div>
       </footer>
