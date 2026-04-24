@@ -15,6 +15,7 @@ import { userRoutes } from './routes/users.js';
 import { domainRoutes } from './routes/domains.js';
 import { healthRoutes } from './routes/health.js';
 import { vcoRoutes } from './routes/vco.js';
+import { stripeRoutes } from './routes/stripe.js';
 import { GigtechError } from './integrations/gigtech.js';
 
 const app = Fastify({
@@ -59,6 +60,7 @@ async function start() {
   await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(domainRoutes, { prefix: '/v1/domains' });
   await app.register(vcoRoutes, { prefix: '/v1/vco' });
+  await app.register(stripeRoutes, { prefix: '/v1/stripe' });
 
   // 404 handler
   app.setNotFoundHandler((req, reply) => {
