@@ -104,3 +104,17 @@ export interface VcoCloudspace {
   creation_time?: number;
   update_time?: number;
 }
+
+export interface VcoInvoice {
+  invoice_id: string;
+  customer_id: string;
+  customer_name: string;
+  number: string;
+  currency: string;
+  total_incl: number;
+  status: string;
+  payment_status: string;
+  month: number;
+  creation_timestamp: number;
+  customer_reference_id?: string;
+}

@@ -13,11 +13,12 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
-import type { VcoCloudspace, VcoCustomer } from '@octera/shared';
+import type { VcoCloudspace, VcoCustomer, VcoInvoice } from '@octera/shared';
 
 interface CustomerDetailData {
   customer: VcoCustomer;
   cloudspaces: VcoCloudspace[];
+  invoices: VcoInvoice[];
 }
 
 export default function VcoCustomerDetail() {
@@ -34,16 +35,23 @@ export default function VcoCustomerDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [customerRes, cloudspacesRes] = await Promise.all([
+        const [customerRes, cloudspacesRes, invoicesRes] = await Promise.all([
           api<{ customer: VcoCustomer }>(
             `/v1/vco/customers/${encodeURIComponent(customerId)}`
           ),
           api<{ cloudspaces: VcoCloudspace[] }>(
             `/v1/vco/customers/${encodeURIComponent(customerId)}/cloudspaces`
           ),
+          api<{ invoices: VcoInvoice[] }>(
+            `/v1/vco/customers/${encodeURIComponent(customerId)}/invoices?limit=12`
+          ),
         ]);
         if (cancelled) return;
-        setData({ customer: customerRes.customer, cloudspaces: cloudspacesRes.cloudspaces });
+        setData({
+          customer: customerRes.customer,
+          cloudspaces: cloudspacesRes.cloudspaces,
+          invoices: invoicesRes.invoices,
+        });
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError) {
@@ -88,7 +96,7 @@ export default function VcoCustomerDetail() {
     );
   }
 
-  const { customer, cloudspaces } = data;
+  const { customer, cloudspaces, invoices } = data;
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -146,7 +154,7 @@ export default function VcoCustomerDetail() {
       </section>
 
       {/* ---- Cloudspaces ---- */}
-      <section>
+      <section className="mb-8">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold">
             Cloudspaces{' '}
@@ -204,6 +212,78 @@ export default function VcoCustomerDetail() {
                 </dl>
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      {/* ---- Recent invoices ---- */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-semibold">
+            Recent invoices{' '}
+            <span className="ml-2 text-sm font-normal text-octera-muted">
+              ({invoices.length})
+            </span>
+          </h2>
+        </div>
+        {invoices.length === 0 ? (
+          <p className="card text-sm text-octera-muted">
+            No invoices yet for this customer.
+          </p>
+        ) : (
+          <div className="card overflow-hidden p-0">
+            <table className="w-full text-sm">
+              <thead className="border-b border-octera-border bg-octera-surface/50 text-octera-muted">
+                <tr>
+                  <th className="px-4 py-2 text-left font-normal">Number</th>
+                  <th className="px-4 py-2 text-left font-normal">Issued</th>
+                  <th className="px-4 py-2 text-right font-normal">Amount</th>
+                  <th className="px-4 py-2 text-left font-normal">Status</th>
+                  <th className="px-4 py-2 text-left font-normal">Payment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {invoices.map((inv) => (
+                  <tr
+                    key={inv.invoice_id}
+                    className="border-b border-octera-border last:border-b-0"
+                  >
+                    <td className="px-4 py-3 font-mono">{inv.number}</td>
+                    <td className="px-4 py-3 text-octera-muted">
+                      {new Date(inv.creation_timestamp * 1000).toLocaleDateString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: '2-digit',
+                      })}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono">
+                      {new Intl.NumberFormat(undefined, {
+                        style: 'currency',
+                        currency: inv.currency,
+                      }).format(inv.total_incl)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="rounded bg-octera-surface px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider text-octera-muted">
+                        {inv.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono text-xs uppercase tracking-wider ${
+                          inv.payment_status === 'paid'
+                            ? 'bg-green-500/15 text-green-400'
+                            : inv.payment_status === 'overdue'
+                              ? 'bg-red-500/15 text-red-400'
+                              : 'bg-amber-500/15 text-amber-400'
+                        }`}
+                      >
+                        {inv.payment_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

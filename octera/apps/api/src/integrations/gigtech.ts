@@ -310,6 +310,37 @@ const CustomerCertificatesListSchema = z.object({
 
 const SuccessSchema = z.object({ success: z.boolean() }).passthrough();
 
+// Matches swagger InvoiceModel (the list-item shape — full invoice has more).
+const InvoiceSchema = z
+  .object({
+    invoice_id: z.string(),
+    customer_id: z.string(),
+    customer_name: z.string(),
+    number: z.string(),
+    currency: z.string(),
+    total_incl: z.number(),
+    // Upstream sometimes returns status enum values, sometimes lowercase strings —
+    // keep it a plain string so we don't parse-fail on surprises.
+    status: z.string(),
+    payment_status: z.string(),
+    month: z.number(),
+    creation_timestamp: z.number(),
+    customer_reference_id: z.string().optional(),
+  })
+  .passthrough();
+
+const InvoicesListSchema = z.object({
+  pagination: z
+    .object({
+      limit: z.number().optional(),
+      pages: z.number().optional(),
+      count: z.number().optional(),
+    })
+    .partial()
+    .optional(),
+  data: z.array(InvoiceSchema),
+});
+
 // Exported TypeScript types derived from the schemas.
 export type Me = z.infer<typeof MeSchema>;
 export type CustomerSummary = z.infer<typeof CustomerSummarySchema>;
@@ -317,6 +348,7 @@ export type Location = z.infer<typeof LocationSchema>;
 export type Cloudspace = z.infer<typeof CloudspaceSchema>;
 export type ReverseProxy = z.infer<typeof ReverseProxySchema>;
 export type CertificateSummary = z.infer<typeof CertificateSummarySchema>;
+export type Invoice = z.infer<typeof InvoiceSchema>;
 
 // ---------------------------------------------------------------------------
 // Fixtures — shape-valid canned responses for mock mode. Keep these in sync
@@ -341,6 +373,51 @@ const MOCK_CUSTOMERS = [
     status: 'active',
   },
 ] as const satisfies readonly z.infer<typeof CustomerSummarySchema>[];
+
+// A few months of fake invoices so the operator UI has something to render.
+// Amounts are rough stand-ins — the real numbers come from gig.tech usage
+// consumption once a partner credential is wired up.
+const MOCK_INVOICES: z.infer<typeof InvoiceSchema>[] = [
+  {
+    invoice_id: 'inv_2026_04_abp_0001',
+    customer_id: 'abp_technologies_1',
+    customer_name: 'ABP Technologies',
+    number: '2026-04-00001',
+    currency: 'EUR',
+    total_incl: 1247.83,
+    status: 'sent',
+    payment_status: 'paid',
+    month: 4,
+    creation_timestamp: Math.floor(new Date('2026-04-01T00:00:00Z').getTime() / 1000),
+    customer_reference_id: '',
+  },
+  {
+    invoice_id: 'inv_2026_03_abp_0001',
+    customer_id: 'abp_technologies_1',
+    customer_name: 'ABP Technologies',
+    number: '2026-03-00001',
+    currency: 'EUR',
+    total_incl: 1198.42,
+    status: 'sent',
+    payment_status: 'paid',
+    month: 3,
+    creation_timestamp: Math.floor(new Date('2026-03-01T00:00:00Z').getTime() / 1000),
+    customer_reference_id: '',
+  },
+  {
+    invoice_id: 'inv_2026_02_abp_0001',
+    customer_id: 'abp_technologies_1',
+    customer_name: 'ABP Technologies',
+    number: '2026-02-00001',
+    currency: 'EUR',
+    total_incl: 1156.07,
+    status: 'sent',
+    payment_status: 'paid',
+    month: 2,
+    creation_timestamp: Math.floor(new Date('2026-02-01T00:00:00Z').getTime() / 1000),
+    customer_reference_id: '',
+  },
+];
 
 const MOCK_LOCATIONS = [
   {
@@ -520,6 +597,36 @@ export const gigtech = {
       idempotencyKey,
       mock: () => ({ success: true }),
     });
+  },
+
+  // --- Invoices -------------------------------------------------------------
+
+  /**
+   * GET /customers/{cid}/invoices — list invoices for a customer.
+   * Supports the usual paging + month/year filters from the swagger.
+   */
+  async listCustomerInvoices(
+    customerId: string,
+    opts: { limit?: number; month?: number; year?: number; search?: string } = {}
+  ): Promise<Invoice[]> {
+    const res = await request({
+      path: `/customers/${encodeURIComponent(customerId)}/invoices`,
+      query: {
+        limit: opts.limit,
+        search: opts.search,
+        month: opts.month,
+        year: opts.year,
+      },
+      schema: InvoicesListSchema,
+      mock: () => ({
+        pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
+        // Only return invoices actually belonging to this customer_id so the
+        // mock respects the path param. Keeps /iriscall_1/invoices empty as
+        // a useful negative test.
+        data: MOCK_INVOICES.filter((i) => i.customer_id === customerId),
+      }),
+    });
+    return res.data;
   },
 
   // --- Domain search / registration (DEFERRED) ------------------------------

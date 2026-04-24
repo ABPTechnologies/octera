@@ -17,7 +17,7 @@ import { Resend } from 'resend';
 import { env } from './env.js';
 
 export class EmailError extends Error {
-  constructor(message: string, public cause?: unknown) {
+  constructor(message: string, public override cause?: unknown) {
     super(message);
     this.name = 'EmailError';
   }
