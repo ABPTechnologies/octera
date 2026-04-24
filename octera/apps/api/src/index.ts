@@ -1,3 +1,8 @@
+// Sentry has to be the very first import so its instrumentation hooks wrap
+// every subsequent import. No top-of-file env access above this line.
+import { initSentry, captureException } from './lib/sentry.js';
+initSentry();
+
 import Fastify, { type FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
@@ -60,7 +65,7 @@ async function start() {
     reply.code(404).send({ error: 'not_found', message: `${req.method} ${req.url} not found` });
   });
 
-  // Error handler — normalize to { error, message } shape.
+  // Error handler — normalize to { error, message } shape + capture to Sentry.
   app.setErrorHandler<FastifyError>((err, req, reply) => {
     req.log.error({ err }, 'request failed');
     // GIG.tech upstream errors carry their own status + code. Map 501 straight
@@ -72,6 +77,7 @@ async function start() {
         return reply.code(501).send({ error: err.code, message: err.message });
       }
       if (err.status === 401 || err.status === 403) {
+        captureException(err, { endpoint: req.url, method: req.method });
         return reply.code(502).send({
           error: 'upstream_auth_failed',
           message:
@@ -79,6 +85,10 @@ async function start() {
         });
       }
       const status = err.status >= 400 && err.status < 600 ? err.status : 502;
+      // Only report 5xx-range upstream errors — 4xx are expected and noisy.
+      if (status >= 500) {
+        captureException(err, { endpoint: req.url, method: req.method });
+      }
       return reply.code(status).send({ error: err.code, message: err.message });
     }
     if (err.validation) {
@@ -89,6 +99,10 @@ async function start() {
       });
     }
     const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
+    // Only 5xx goes to Sentry; user errors (4xx) are expected.
+    if (status >= 500) {
+      captureException(err, { endpoint: req.url, method: req.method });
+    }
     reply.code(status).send({
       error: err.name || 'internal_error',
       message:
