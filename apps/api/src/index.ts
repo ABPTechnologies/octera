@@ -1,6 +1,6 @@
 // Sentry has to be the very first import so its instrumentation hooks wrap
 // every subsequent import. No top-of-file env access above this line.
-import { initSentry, captureException } from './lib/sentry.js';
+import { initSentry, captureException, flushSentry } from './lib/sentry.js';
 initSentry();
 
 import Fastify, { type FastifyError } from 'fastify';
@@ -8,6 +8,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import { prisma } from '@octera/db';
 import { env } from './lib/env.js';
 import { authPlugin } from './middleware/auth.js';
 import { authRoutes } from './routes/auth.js';
@@ -16,6 +17,7 @@ import { domainRoutes } from './routes/domains.js';
 import { healthRoutes } from './routes/health.js';
 import { vcoRoutes } from './routes/vco.js';
 import { stripeRoutes } from './routes/stripe.js';
+import { closeQueues } from './jobs/index.js';
 import { GigtechError } from './integrations/gigtech.js';
 
 const app = Fastify({
@@ -121,6 +123,34 @@ async function start() {
     app.log.error(err);
     process.exit(1);
   }
+
+  // ---- Graceful shutdown -------------------------------------------------
+  // Orchestrators (Railway, Kubernetes, systemd) send SIGTERM then expect
+  // the process to drain in-flight work + close pooled connections within
+  // a short window. We need to:
+  //   1. Stop accepting new connections (app.close — Fastify drains in-flight)
+  //   2. Close BullMQ queues (the Queue side; workers are a separate process)
+  //   3. Disconnect Prisma (release Postgres pool slots)
+  //   4. Flush Sentry so any in-flight error events ship before exit
+  // Idempotent — multiple signals don't re-run the chain.
+  let shuttingDown = false;
+  async function shutdown(signal: string) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info({ signal }, 'shutting down API');
+    try {
+      await app.close();
+      await closeQueues();
+      await prisma.$disconnect();
+      await flushSentry(2_000);
+    } catch (err) {
+      app.log.error({ err }, 'error during shutdown');
+    } finally {
+      process.exit(0);
+    }
+  }
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 void start();

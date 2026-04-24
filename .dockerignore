@@ -1,0 +1,45 @@
+# Don't ship local dev artifacts into the build context
+node_modules
+**/node_modules
+.git
+.github
+.vscode
+.idea
+
+# Build outputs (we recreate them in the container)
+**/.next
+**/dist
+**/.turbo
+
+# Local secrets and env files
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs and caches
+*.log
+**/.cache
+**/coverage
+**/.npm
+
+# Markdown / docs we don't need in image
+*.md
+!README.md
+docs/
+
+# Test artifacts
+**/test-results
+**/playwright-report
+
+# Skip per-app build artifacts that are recreated
+apps/api/dist
+apps/web/.next
+packages/db/src/generated
