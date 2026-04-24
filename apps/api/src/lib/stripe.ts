@@ -39,9 +39,9 @@ export function getStripe(): Stripe {
   if (cachedClient) return cachedClient;
   if (!env.STRIPE_SECRET_KEY) throw new StripeNotConfigured();
   cachedClient = new Stripe(env.STRIPE_SECRET_KEY, {
-    // Pin a recent API version so behavior is stable. Bump intentionally
-    // when we adopt new features; never let the SDK auto-upgrade silently.
-    apiVersion: '2024-11-20.acacia',
+    // Pin the API version the SDK ships with. Bump intentionally when we
+    // adopt new features; never let the SDK auto-upgrade silently.
+    apiVersion: '2026-04-22.dahlia',
     // Tag requests so they're searchable in Stripe's logs.
     appInfo: {
       name: 'Octera',
