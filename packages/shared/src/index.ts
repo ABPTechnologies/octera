@@ -119,6 +119,18 @@ export interface VcoInvoice {
   customer_reference_id?: string;
 }
 
+export interface VcoSummary {
+  customers: { total: number; active: number };
+  cloudspaces: { total: number };
+  locations: { total: number };
+  invoices_this_month: {
+    count: number;
+    revenue: number;
+    currency: string;
+  };
+  invoices_total: { count: number };
+}
+
 export interface VcoAuditLog {
   id: string;
   timestamp: number;

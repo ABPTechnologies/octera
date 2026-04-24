@@ -735,6 +735,51 @@ export const gigtech = {
     return res.data;
   },
 
+  // --- VCO-wide audits (admin scope) ----------------------------------------
+
+  /**
+   * GET /admin/audits — every audit entry across the whole VCO. Useful
+   * for operator-level "what happened today" views.
+   */
+  async listVcoAudits(opts: { limit?: number; username?: string; status_code?: number } = {}): Promise<AuditLog[]> {
+    const res = await request({
+      path: '/admin/audits',
+      query: {
+        limit: opts.limit,
+        username: opts.username,
+        status_code: opts.status_code,
+        include_get_requests: true,
+      },
+      schema: AuditsListSchema,
+      mock: () => ({
+        pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
+        // VCO-wide mock = all customer audits (only ABP has any in fixtures).
+        data: [...MOCK_AUDITS],
+      }),
+    });
+    return res.data;
+  },
+
+  // --- VCO-wide invoices (admin scope) --------------------------------------
+
+  /**
+   * GET /admin/invoices — every invoice across the whole VCO, regardless of
+   * customer. Useful for operator-level revenue summaries.
+   */
+  async listVcoInvoices(opts: { limit?: number; month?: number; year?: number } = {}): Promise<Invoice[]> {
+    const res = await request({
+      path: '/admin/invoices',
+      query: { limit: opts.limit, month: opts.month, year: opts.year },
+      schema: InvoicesListSchema,
+      mock: () => ({
+        pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
+        // Same fixtures as customer-scoped — only ABP has invoices in mocks.
+        data: [...MOCK_INVOICES],
+      }),
+    });
+    return res.data;
+  },
+
   // --- Audit logs -----------------------------------------------------------
 
   /**

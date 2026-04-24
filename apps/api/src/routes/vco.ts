@@ -159,6 +159,85 @@ export const vcoRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
+   * GET /v1/vco/audits
+   *
+   * VCO-wide audit log — every API call against every customer's
+   * resources. Use the per-customer endpoint when you want one tenant's
+   * slice; this one is the firehose.
+   */
+  app.get<{
+    Querystring: { limit?: string; username?: string; status_code?: string };
+  }>(
+    '/audits',
+    adminOnly,
+    async (req) => {
+      const { limit, username, status_code } = req.query;
+      const audits = await gigtech.listVcoAudits({
+        limit: limit ? Number.parseInt(limit, 10) : undefined,
+        username,
+        status_code: status_code ? Number.parseInt(status_code, 10) : undefined,
+      });
+      return { audits };
+    }
+  );
+
+  /**
+   * GET /v1/vco/summary
+   *
+   * Aggregate metrics for the operator dashboard headline strip. Server-side
+   * aggregation so the browser makes one request instead of N. Numbers are
+   * computed from the same gig.tech mocks/responses the per-customer pages
+   * use, so the summary stays consistent with the drill-downs.
+   */
+  app.get('/summary', adminOnly, async () => {
+    const [customers, locations, vcoInvoices] = await Promise.all([
+      gigtech.listCustomers({ limit: 200 }),
+      gigtech.listLocations(),
+      gigtech.listVcoInvoices({ limit: 200 }),
+    ]);
+
+    const now = new Date();
+    const thisMonth = now.getUTCMonth() + 1; // gig.tech uses 1-12
+    const thisYear = now.getUTCFullYear();
+
+    let cloudspacesTotal = 0;
+    // Walk each customer's cloudspaces — small N for now (mock mode has 2).
+    // When N grows past ~50 we'll either cache or have gig.tech expose a
+    // VCO-wide cloudspaces endpoint.
+    await Promise.all(
+      customers.map(async (c) => {
+        const css = await gigtech.listCloudspacesFor(c.customer_id);
+        cloudspacesTotal += css.length;
+      })
+    );
+
+    const invoicesThisMonth = vcoInvoices.filter((i) => {
+      const d = new Date(i.creation_timestamp * 1000);
+      return d.getUTCMonth() + 1 === thisMonth && d.getUTCFullYear() === thisYear;
+    });
+
+    const revenueThisMonth = invoicesThisMonth.reduce((sum, i) => sum + i.total_incl, 0);
+    // Pick the dominant currency in mock mode; in reality every customer
+    // is invoiced in one currency, so this is just a display fallback.
+    const currency = invoicesThisMonth[0]?.currency ?? vcoInvoices[0]?.currency ?? 'EUR';
+
+    return {
+      customers: {
+        total: customers.length,
+        active: customers.filter((c) => (c.status ?? '').toLowerCase() === 'active').length,
+      },
+      cloudspaces: { total: cloudspacesTotal },
+      locations: { total: locations.length },
+      invoices_this_month: {
+        count: invoicesThisMonth.length,
+        revenue: revenueThisMonth,
+        currency,
+      },
+      invoices_total: { count: vcoInvoices.length },
+    };
+  });
+
+  /**
    * GET /v1/vco/customers/:customerId/audits
    * Audit log of every API call against this customer's resources.
    * Optional ?limit, ?username, ?status_code filters.

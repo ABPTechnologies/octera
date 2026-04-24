@@ -19,14 +19,16 @@
  * cloudspace, renew a cert) land once we have a real partner credential.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { Search } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import type {
   VcoCustomer,
   VcoLocation,
   VcoMe,
   VcoStatus,
+  VcoSummary,
 } from '@octera/shared';
 
 interface DashboardData {
@@ -34,12 +36,17 @@ interface DashboardData {
   me: VcoMe;
   customers: VcoCustomer[];
   locations: VcoLocation[];
+  summary: VcoSummary;
 }
 
 export default function VcoOperatorDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Local filter state — kept in component, not URL, since the operator
+  // dashboard is a single-screen view; preserving across reloads isn't
+  // worth the URL noise.
+  const [customerFilter, setCustomerFilter] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -47,11 +54,12 @@ export default function VcoOperatorDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const [status, me, customersRes, locationsRes] = await Promise.all([
+        const [status, me, customersRes, locationsRes, summary] = await Promise.all([
           api<VcoStatus>('/v1/vco/status'),
           api<VcoMe>('/v1/vco/me'),
           api<{ customers: VcoCustomer[] }>('/v1/vco/customers'),
           api<{ locations: VcoLocation[] }>('/v1/vco/locations'),
+          api<VcoSummary>('/v1/vco/summary'),
         ]);
         if (cancelled) return;
         setData({
@@ -59,6 +67,7 @@ export default function VcoOperatorDashboard() {
           me,
           customers: customersRes.customers,
           locations: locationsRes.locations,
+          summary,
         });
       } catch (err) {
         if (cancelled) return;
@@ -106,7 +115,22 @@ export default function VcoOperatorDashboard() {
     );
   }
 
-  const { status, me, customers, locations } = data;
+  const { status, me, customers, locations, summary } = data;
+
+  // Memoized filter — case-insensitive substring match across name, id, email.
+  // Empty filter shows all.
+  const filteredCustomers = useMemo(() => {
+    const q = customerFilter.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter((c) => {
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.customer_id.toLowerCase().includes(q) ||
+        (c.contact_name?.toLowerCase().includes(q) ?? false) ||
+        (c.email?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [customers, customerFilter]);
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
@@ -119,6 +143,39 @@ export default function VcoOperatorDashboard() {
           </p>
         </div>
         <StatusBadge status={status} />
+      </div>
+
+      {/* ---- Headline stats ---- */}
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+        <StatCard
+          label="Customers"
+          value={summary.customers.total.toString()}
+          sub={`${summary.customers.active} active`}
+        />
+        <StatCard
+          label="Cloudspaces"
+          value={summary.cloudspaces.total.toString()}
+          sub="across all customers"
+        />
+        <StatCard
+          label="Locations"
+          value={summary.locations.total.toString()}
+          sub="datacenters"
+        />
+        <StatCard
+          label="This month"
+          value={summary.invoices_this_month.count.toString()}
+          sub="invoices"
+        />
+        <StatCard
+          label="Revenue"
+          value={new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: summary.invoices_this_month.currency,
+            maximumFractionDigits: 0,
+          }).format(summary.invoices_this_month.revenue)}
+          sub="this month"
+        />
       </div>
 
       {/* ---- VCO identity ---- */}
@@ -158,16 +215,33 @@ export default function VcoOperatorDashboard() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Customers */}
         <section className="lg:col-span-2">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">
               Customers{' '}
               <span className="ml-2 text-sm font-normal text-octera-muted">
-                ({customers.length})
+                {customerFilter
+                  ? `(${filteredCustomers.length} of ${customers.length})`
+                  : `(${customers.length})`}
               </span>
             </h2>
+            {/* Search appears whenever there are customers; the input is small
+                enough that it's not noise even with just a few. */}
+            {customers.length > 1 && (
+              <div className="relative w-64 max-w-full">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-octera-muted" />
+                <input
+                  type="search"
+                  value={customerFilter}
+                  onChange={(e) => setCustomerFilter(e.target.value)}
+                  placeholder="Filter by name, ID, contact, email"
+                  aria-label="Filter customers"
+                  className="w-full rounded-md border border-octera-border bg-octera-surface py-1.5 pl-8 pr-3 text-sm placeholder:text-octera-muted focus:border-octera-cyan/60 focus:outline-none"
+                />
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {customers.map((c) => (
+            {filteredCustomers.map((c) => (
               <Link
                 key={c.customer_id}
                 href={`/admin/vco/customers/${encodeURIComponent(c.customer_id)}`}
@@ -204,6 +278,11 @@ export default function VcoOperatorDashboard() {
                 )}
               </Link>
             ))}
+            {filteredCustomers.length === 0 && customers.length > 0 && (
+              <p className="text-sm text-octera-muted">
+                No customers match &ldquo;{customerFilter}&rdquo;.
+              </p>
+            )}
             {customers.length === 0 && (
               <p className="text-sm text-octera-muted">
                 No customers visible to this credential.
@@ -249,6 +328,18 @@ export default function VcoOperatorDashboard() {
         </section>
       </div>
     </main>
+  );
+}
+
+function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="card py-3">
+      <div className="font-mono text-xs uppercase tracking-wider text-octera-muted">
+        {label}
+      </div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      {sub && <div className="mt-0.5 text-xs text-octera-muted">{sub}</div>}
+    </div>
   );
 }
 

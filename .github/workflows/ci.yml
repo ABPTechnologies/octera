@@ -1,0 +1,59 @@
+name: CI
+
+# Triggers: every PR and every push to main. Branches besides main can use
+# pre-PR runs by pushing to an open PR; we don't burn minutes on every
+# commit on every branch.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs on the same branch when a new push arrives.
+# Avoids burning CI minutes on stale commits.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Match the version used in development. Keep in sync with package.json
+  # `engines.node`.
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9.12.3'
+  # Required by env validation in apps/api/src/lib/env.ts. Real secrets are
+  # only used at runtime; for CI builds we only need shape-valid values.
+  DATABASE_URL: 'postgresql://octera:octera@localhost:5432/octera'
+  REDIS_URL: 'redis://localhost:6379'
+  JWT_SECRET: 'ci-only-not-a-real-secret-padded-to-32+-chars-aaaaaaaaa'
+  JWT_REFRESH_SECRET: 'ci-only-not-a-real-secret-padded-to-32+-chars-bbbbbbbbb'
+
+jobs:
+  quality:
+    name: typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @octera/db generate
+
+      - name: Typecheck (all packages)
+        run: pnpm typecheck
+
+      - name: Production build (all packages)
+        run: pnpm build

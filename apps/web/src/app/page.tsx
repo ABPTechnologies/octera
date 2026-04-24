@@ -95,6 +95,9 @@ export default function HomePage() {
                 {l.label}
               </Link>
             ))}
+            <Link href="/status" className="transition hover:text-octera-cyan">
+              Status
+            </Link>
           </nav>
           <span>v0.0.1</span>
         </div>

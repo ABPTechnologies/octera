@@ -51,6 +51,12 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                 Operator
               </Link>
               <Link
+                href="/admin/vco/audits"
+                className="text-octera-muted transition hover:text-octera-cyan"
+              >
+                Audit log
+              </Link>
+              <Link
                 href="/dashboard"
                 className="text-octera-muted transition hover:text-octera-cyan"
               >
