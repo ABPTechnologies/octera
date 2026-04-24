@@ -29,7 +29,8 @@ const envSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
 
   RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().email().default('Octera <noreply@octera.net>'),
+  // EMAIL_FROM supports the "Name <addr>" header format, not strict email only
+  EMAIL_FROM: z.string().min(3).default('Octera <noreply@octera.net>'),
 
   SENTRY_DSN: z.string().optional(),
 });

@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+# Exception: the template is safe to commit
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Prisma
+packages/db/src/generated/
+**/generated/prisma/
+
+# Turbo
+.turbo/
+
+# Next.js
+apps/web/.next/
+apps/web/next-env.d.ts
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Sentry
+.sentryclirc
+
+# Docker
+docker-data/
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.cache/
+.tmp/

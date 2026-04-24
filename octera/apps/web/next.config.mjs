@@ -1,9 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    typedRoutes: true,
-  },
+  // typedRoutes graduated out of experimental in Next 15.x
+  typedRoutes: true,
   transpilePackages: ['@octera/shared'],
 };
 
