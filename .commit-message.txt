@@ -1,26 +1,13 @@
-fix: compile workspace packages to dist (production module resolution)
+fix(web): apply Railway lessons to web Dockerfile preemptively
 
-Production boot was hanging silently — Railway showed "Initializing"
-indefinitely, edge returned 502 "Application failed to respond", and
-the deploy log stopped at "No pending migrations to apply" with no
-output from `node apps/api/dist/index.js` ever.
+Two changes that mirror what bit us on the API side, applied to apps/web
+before we deploy it (instead of after).
 
-Root cause: @octera/db and @octera/shared shipped with package.json
-"main" pointing at .ts source. tsx hides this in dev. In production
-node sees `./src/index.ts`, fails with "Unknown file extension '.ts'"
-at module load, and exits before pino can emit a single line.
+1. Build @octera/shared before next build. With main → ./dist/index.js
+   (post-workspace-build commit ac4da5a), Next can't resolve the package
+   at build time without the dist artefact, even with transpilePackages.
 
-Fix:
-- packages/{db,shared}: add tsconfig.json, build script, and point
-  main/types/exports at compiled dist/.
-- pnpm-lock.yaml: register typescript as devDep on packages/shared so
-  --frozen-lockfile is happy.
-- apps/api/Dockerfile: build @octera/shared then @octera/db before
-  building @octera/api, and copy dist/ (not src/) into the runner.
-
-Local dev still works because the deps stage installs all deps and the
-builder runs the same `pnpm --filter <pkg> build` chain — `pnpm dev`
-resolves through the same package.json so a one-time `pnpm -r build`
-keeps tsx watch happy in dev too.
+2. Default HOSTNAME to "::" (IPv6 dual-stack) so Railway's internal mesh
+   can reach the Next server. 0.0.0.0 produces silent 502s at the edge.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
