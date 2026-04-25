@@ -47,6 +47,13 @@ COPY apps/web ./apps/web
 COPY packages/shared ./packages/shared
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.json ./
 
+# @octera/shared's package.json `main` points at compiled dist/. Build it
+# before next build resolves the import — same lesson as the API side. With
+# `transpilePackages` in next.config Next can transpile *source*, but module
+# resolution still walks `main`/`exports` first; without dist/ Next errors out
+# at build with "Cannot find module '@octera/shared'".
+RUN pnpm --filter @octera/shared build
+
 # Build with Next.js standalone output enabled (see next.config.mjs).
 # Next.js will emit:
 #   apps/web/.next/standalone/    — self-contained server + minimal node_modules
@@ -76,9 +83,12 @@ RUN chown -R node:node /app
 USER node
 
 ENV NODE_ENV=production \
-    HOSTNAME=0.0.0.0 \
+    HOSTNAME=:: \
     PORT=3000 \
     NEXT_TELEMETRY_DISABLED=1
+# `::` (IPv6 dual-stack) — same reason as the API. Railway's internal mesh
+# routes via IPv6; an IPv4-only listener returns 502 even though Next prints
+# "Server started" cleanly. See CLAUDE.md "Hard-won deployment lessons".
 
 EXPOSE 3000
 
