@@ -6,10 +6,15 @@ import { prisma } from '@octera/db';
 
 const REFRESH_COOKIE = 'octera_rt';
 
+// In production the web app and API live on different origins (api.octera.net
+// vs octera.net, or different *.up.railway.app subdomains), so the refresh
+// cookie has to be SameSite=None to be set on cross-site POST responses —
+// which in turn requires Secure. In dev everything is on localhost and Lax
+// is fine (and Secure=true would block the cookie over plain http).
 const cookieOpts = {
   httpOnly: true,
   secure: env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
+  sameSite: env.NODE_ENV === 'production' ? ('none' as const) : ('lax' as const),
   path: '/v1/auth',
   domain: env.COOKIE_DOMAIN,
   maxAge: env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60,
