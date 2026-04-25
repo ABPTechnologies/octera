@@ -54,6 +54,14 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.js
 # at build with "Cannot find module '@octera/shared'".
 RUN pnpm --filter @octera/shared build
 
+# NEXT_PUBLIC_* values are inlined into the client bundle at *build* time,
+# not read from process.env at runtime. Without these ARG+ENV lines the
+# bundled JS hardcodes the fallback (e.g. http://localhost:4000) and the
+# browser hits localhost from production. Railway exposes service vars
+# during build but Dockerfile RUN steps only see them via ARG.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 # Build with Next.js standalone output enabled (see next.config.mjs).
 # Next.js will emit:
 #   apps/web/.next/standalone/    — self-contained server + minimal node_modules
