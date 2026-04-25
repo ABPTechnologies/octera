@@ -1,23 +1,26 @@
-feat: editable profile name + dashboard tile navigation
+feat(auth): change-password endpoint + Settings UI
 
-Three small but visible improvements to the customer self-care surface:
+POST /v1/auth/change-password (authenticated) verifies the user's current
+password, hashes the new one, and revokes every OTHER session belonging
+to the user — keeping the caller's own session alive so they don't get
+bounced out mid-flow. The current-password check defends against
+access-token-theft pivoting to a permanent password change.
 
-1. Dashboard tiles (My domains / Hosting / Support) were `<button disabled>`
-   "Coming soon" stubs. They now navigate to /domains, /hosting, /tickets
-   — destinations that already exist as PlaceholderPanel skeletons with
-   honest roadmap status. Users get a real navigation experience instead
-   of a dead button.
+API changes:
+ - changePassword() helper in auth.service.ts
+ - new AuthError code 'wrong_current_password'
+ - POST /v1/auth/change-password route, Zod-validated, min(12) on new
+ - rejects same-as-old with 400 same_password
+ - returns 403 wrong_current_password vs 500 on real errors
 
-2. PATCH /v1/users/me on the API: any authenticated user can update their
-   own fullName. Email/role intentionally not editable from this endpoint
-   (verified flows + admin-only respectively). Returns the same UserPublic
-   shape the auth endpoints emit.
+Web changes:
+ - Settings page: ChangePasswordPanel replaces the placeholder, with
+   live validation (length, mismatch, same-as-current), correct
+   autocomplete tokens, and clear ok/error feedback.
+ - PasswordField helper to keep the three inputs consistent.
 
-3. Settings page Profile section becomes an editable form. Auth-context
-   gets an `updateUser(next)` setter so the form patches the cached user
-   in place after a successful save — no refetch round-trip.
-
-The "Change password" / "2FA" / "Notification preferences" panels are still
-PlaceholderPanels marked v1-wiring; those land with the auth-hardening chunk.
+Other-session revocation is silent — callers using a different browser
+just get 401 on their next refresh and bounce to /login. This is the
+expected security UX for "I changed my password" flows.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
