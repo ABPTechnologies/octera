@@ -1,0 +1,19 @@
+fix: prisma openssl on alpine — binaryTargets + apk openssl
+
+Container starts on Railway, runs migrate:deploy, then exits 1:
+
+  prisma:warn Prisma failed to detect the libssl/openssl version to use,
+  and may not work as expected. Defaulting to "openssl-1.1.x".
+  Please manually install OpenSSL and try installing Prisma again.
+
+Two-part fix because both ends of the path were wrong:
+
+1. schema.prisma: add binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+   so prisma generate downloads the Alpine + openssl-3 query engine
+   alongside the dev-host (macOS) one.
+
+2. apps/api/Dockerfile runner stage: apk add openssl alongside the
+   existing tini + libc6-compat, so libssl is actually present at
+   runtime for the Alpine engine binary to dlopen.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
