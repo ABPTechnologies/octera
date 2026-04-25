@@ -87,6 +87,23 @@ export default function VcoOperatorDashboard() {
     };
   }, []);
 
+  // Memoized filter — case-insensitive substring match across name, id, email.
+  // Empty filter shows all. Hook MUST come before any conditional returns
+  // (Rules of Hooks); when data is null the input is just an empty list.
+  const filteredCustomers = useMemo(() => {
+    const all = data?.customers ?? [];
+    const q = customerFilter.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter((c) => {
+      return (
+        c.name.toLowerCase().includes(q) ||
+        c.customer_id.toLowerCase().includes(q) ||
+        (c.contact_name?.toLowerCase().includes(q) ?? false) ||
+        (c.email?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [data?.customers, customerFilter]);
+
   if (loading) {
     return (
       <main className="mx-auto max-w-6xl px-6 py-12">
@@ -116,21 +133,6 @@ export default function VcoOperatorDashboard() {
   }
 
   const { status, me, customers, locations, summary } = data;
-
-  // Memoized filter — case-insensitive substring match across name, id, email.
-  // Empty filter shows all.
-  const filteredCustomers = useMemo(() => {
-    const q = customerFilter.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter((c) => {
-      return (
-        c.name.toLowerCase().includes(q) ||
-        c.customer_id.toLowerCase().includes(q) ||
-        (c.contact_name?.toLowerCase().includes(q) ?? false) ||
-        (c.email?.toLowerCase().includes(q) ?? false)
-      );
-    });
-  }, [customers, customerFilter]);
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
