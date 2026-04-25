@@ -1,14 +1,17 @@
-fix(web): expose NEXT_PUBLIC_API_URL to next build via ARG
+fix(api): SameSite=None on refresh cookie for cross-site auth
 
-NEXT_PUBLIC_* values are inlined into the client bundle at build time, not
-read from process.env at runtime. Railway exposes service vars during the
-Docker build, but RUN steps only see them via explicit ARG.
+The refresh-token cookie was set with SameSite=Lax. With the web on
+jubilant-victory-production-babf.up.railway.app and the API on
+octera-production.up.railway.app, browsers refuse to store a Lax cookie
+returned from a cross-site POST — so signup/login worked (access token
+in body) but refresh would always fail and the user would get logged
+out at the 15-minute access-token TTL.
 
-Without these lines the bundled JS baked in the dev fallback
-http://localhost:4000 and the production /status page sat stuck on
-"Loading probes…" with a pending request to localhost.
+Set SameSite=None in production (still Secure=true, still HttpOnly).
+Dev keeps Lax because secure+none over plain http://localhost is
+rejected by browsers.
 
-Also documents the lesson in CLAUDE.md alongside the other Railway
-gotchas.
+The web's API client already sends credentials: 'include', so no web
+change is needed for the cookie to ride along on /v1/auth/refresh.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
