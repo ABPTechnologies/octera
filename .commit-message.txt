@@ -1,17 +1,23 @@
-fix(web): hoist useMemo above early returns in /admin/vco
+feat: editable profile name + dashboard tile navigation
 
-React error #310 ("Rendered fewer hooks than expected") on /admin/vco
-when an ADMIN user signed in. The useMemo for filteredCustomers sat
-*after* two `if (loading) return ...` and `if (!data) return ...`
-branches. On first render `loading` is true, the early return fires
-before useMemo is called. On the next render data is loaded, useMemo
-runs, and React's hook count differs from the prior render — the page
-crashes with the minified production error.
+Three small but visible improvements to the customer self-care surface:
 
-Hoist the useMemo above the conditional returns and let it operate on
-`data?.customers ?? []` while data is still null.
+1. Dashboard tiles (My domains / Hosting / Support) were `<button disabled>`
+   "Coming soon" stubs. They now navigate to /domains, /hosting, /tickets
+   — destinations that already exist as PlaceholderPanel skeletons with
+   honest roadmap status. Users get a real navigation experience instead
+   of a dead button.
 
-The other operator pages (audits, customers/[id]) are fine — their
-hooks are already above the early returns.
+2. PATCH /v1/users/me on the API: any authenticated user can update their
+   own fullName. Email/role intentionally not editable from this endpoint
+   (verified flows + admin-only respectively). Returns the same UserPublic
+   shape the auth endpoints emit.
+
+3. Settings page Profile section becomes an editable form. Auth-context
+   gets an `updateUser(next)` setter so the form patches the cached user
+   in place after a successful save — no refetch round-trip.
+
+The "Change password" / "2FA" / "Notification preferences" panels are still
+PlaceholderPanels marked v1-wiring; those land with the auth-hardening chunk.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
