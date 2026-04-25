@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../lib/env.js';
-import { AuthError, login, logout, rotateRefreshToken, signAccessToken, signup } from '../services/auth.service.js';
+import { AuthError, changePassword, login, logout, rotateRefreshToken, signAccessToken, signup } from '../services/auth.service.js';
 import { prisma } from '@octera/db';
 
 const REFRESH_COOKIE = 'octera_rt';
@@ -112,5 +112,42 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       select: { id: true, email: true, fullName: true, role: true, permissions: true, createdAt: true },
     });
     return { user };
+  });
+
+  // --- Change password ---
+  // Authenticated user changes their own password. Verifies current password
+  // to defend against access-token theft (a stolen access token alone can't
+  // pivot to a permanent password change). Revokes every OTHER session
+  // belonging to the user; this browser's session stays alive so the user
+  // doesn't get bounced out mid-flow.
+  app.post('/change-password', { onRequest: [app.authenticate] }, async (req, reply) => {
+    const body = z
+      .object({
+        currentPassword: z.string().min(1),
+        // 12 chars to match signup's policy. Tightening these later is
+        // additive — `min(12)` here means existing users with weaker (legacy
+        // import) passwords can still log in, but can't keep them.
+        newPassword: z.string().min(12, 'New password must be at least 12 characters'),
+      })
+      .parse(req.body);
+    if (body.currentPassword === body.newPassword) {
+      return reply
+        .code(400)
+        .send({ error: 'same_password', message: 'New password must differ from current password' });
+    }
+    try {
+      await changePassword({
+        userId: req.user.sub,
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+        keepSessionToken: req.cookies[REFRESH_COOKIE],
+      });
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof AuthError && err.code === 'wrong_current_password') {
+        return reply.code(403).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
   });
 };

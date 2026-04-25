@@ -7,7 +7,14 @@ import type { FastifyInstance } from 'fastify';
 const REFRESH_TOKEN_BYTES = 48;
 
 export class AuthError extends Error {
-  constructor(public code: 'invalid_credentials' | 'email_taken' | 'invalid_refresh', message: string) {
+  constructor(
+    public code:
+      | 'invalid_credentials'
+      | 'email_taken'
+      | 'invalid_refresh'
+      | 'wrong_current_password',
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -114,4 +121,54 @@ export async function logout(refreshToken: string) {
 
 export function signAccessToken(app: FastifyInstance, user: { id: string; email: string; role: UserRole }) {
   return app.jwt.sign({ sub: user.id, email: user.email, role: user.role });
+}
+
+/**
+ * Change password for the currently authenticated user. Verifies the current
+ * password to prevent token-theft → password-reset attacks. On success,
+ * revokes all OTHER sessions tied to this user (keeping `keepSessionToken`
+ * alive) so a stolen refresh token elsewhere stops working — except the
+ * caller's own browser, which keeps its session.
+ *
+ * Returns void; the caller's existing access token + refresh cookie remain
+ * valid since we don't touch the session matching `keepSessionToken`.
+ */
+export async function changePassword(params: {
+  userId: string;
+  currentPassword: string;
+  newPassword: string;
+  /** Refresh token of the session that initiated the change — keep it alive. */
+  keepSessionToken?: string;
+}): Promise<void> {
+  const user = await prisma.user.findUnique({ where: { id: params.userId } });
+  if (!user) {
+    // Genuinely shouldn't happen — the access token verified before we got
+    // here. If it does, treat as auth failure.
+    throw new AuthError('invalid_credentials', 'Account not found');
+  }
+  const ok = await argon2.verify(user.passwordHash, params.currentPassword).catch(() => false);
+  if (!ok) {
+    throw new AuthError('wrong_current_password', 'Current password is incorrect');
+  }
+  const passwordHash = await argon2.hash(params.newPassword, { type: argon2.argon2id });
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: params.userId },
+      data: { passwordHash },
+    }),
+    // Revoke every other session. The caller's session — identified by its
+    // refresh token — is excluded so the user doesn't get bounced out of
+    // the page they just submitted the form from.
+    prisma.session.updateMany({
+      where: {
+        userId: params.userId,
+        revokedAt: null,
+        ...(params.keepSessionToken
+          ? { refreshToken: { not: params.keepSessionToken } }
+          : {}),
+      },
+      data: { revokedAt: now },
+    }),
+  ]);
 }
