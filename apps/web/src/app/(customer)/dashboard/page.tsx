@@ -1,6 +1,34 @@
 'use client';
 
+import Link from 'next/link';
+import type { Route } from 'next';
 import { useAuth } from '@/lib/auth-context';
+
+// Dashboard quick-link tiles. Each entry navigates to its sidebar page —
+// those pages are skeletons in v1 (PlaceholderPanel + roadmap status), so
+// the user sees what's coming and where, instead of a dead "Coming soon"
+// button. Casting `href as Route` to sidestep a Next 15 typed-routes
+// false-positive on string-literal unions in dashboard pages.
+const TILES = [
+  {
+    href: '/domains',
+    title: 'My domains',
+    desc: 'Search, register, and manage DNS + SSL for your domains.',
+    cta: 'Open domains',
+  },
+  {
+    href: '/hosting',
+    title: 'Hosting',
+    desc: 'Provision and manage cloud servers across our locations.',
+    cta: 'Open hosting',
+  },
+  {
+    href: '/tickets',
+    title: 'Support',
+    desc: 'Open a ticket or check the status of existing requests.',
+    cta: 'Open tickets',
+  },
+] as const;
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -17,33 +45,18 @@ export default function DashboardPage() {
       </p>
 
       <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-        {[
-          {
-            title: 'My domains',
-            desc: 'Search, register, and manage DNS + SSL for your domains.',
-            cta: 'Coming soon',
-          },
-          {
-            title: 'Hosting',
-            desc: 'Provision and manage cloud servers across our locations.',
-            cta: 'Coming soon',
-          },
-          {
-            title: 'Support',
-            desc: 'Open a ticket or check the status of existing requests.',
-            cta: 'Coming soon',
-          },
-        ].map((item) => (
-          <div key={item.title} className="card">
+        {TILES.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href as Route}
+            className="card transition hover:border-octera-cyan/60"
+          >
             <h3 className="text-lg font-semibold">{item.title}</h3>
             <p className="mt-2 text-sm text-octera-muted">{item.desc}</p>
-            <button
-              className="btn-ghost mt-4 w-full cursor-not-allowed opacity-60"
-              disabled
-            >
-              {item.cta}
-            </button>
-          </div>
+            <span className="btn-ghost mt-4 inline-block w-full text-center">
+              {item.cta} →
+            </span>
+          </Link>
         ))}
       </div>
 

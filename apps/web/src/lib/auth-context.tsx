@@ -10,6 +10,12 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, fullName?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * Splice an updated UserPublic into the cached state — used after a
+   * profile-edit endpoint (e.g. PATCH /v1/users/me) returns the new
+   * shape, so we don't need a refetch round-trip to update the UI.
+   */
+  updateUser: (next: UserPublic) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -68,8 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   };
 
+  const updateUser = (next: UserPublic) => setUser(next);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
