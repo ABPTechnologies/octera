@@ -67,7 +67,14 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json turbo.json tsconfig.base.js
 # Generate the Prisma client (writes into packages/db/node_modules/.prisma)
 RUN pnpm --filter @octera/db generate
 
-# Compile TypeScript to apps/api/dist/
+# Compile workspace packages FIRST, then the API. apps/api imports from
+# @octera/shared and @octera/db; both ship as TS source in dev (resolved by
+# tsx). In production we need real .js so plain `node` can resolve them via
+# package.json `main` → `./dist/index.js`. Without this, the API exits at
+# import time with "Unknown file extension '.ts'" and produces no logs (which
+# is exactly what bit us on the first prod boot).
+RUN pnpm --filter @octera/shared build
+RUN pnpm --filter @octera/db build
 RUN pnpm --filter @octera/api build
 
 # -----------------------------------------------------------------------------
@@ -93,9 +100,9 @@ COPY --from=builder /repo/apps/api/dist ./apps/api/dist
 COPY --from=builder /repo/apps/api/package.json ./apps/api/package.json
 COPY --from=builder /repo/packages/db/package.json ./packages/db/package.json
 COPY --from=builder /repo/packages/db/prisma ./packages/db/prisma
-COPY --from=builder /repo/packages/db/src ./packages/db/src
+COPY --from=builder /repo/packages/db/dist ./packages/db/dist
 COPY --from=builder /repo/packages/shared/package.json ./packages/shared/package.json
-COPY --from=builder /repo/packages/shared/src ./packages/shared/src
+COPY --from=builder /repo/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /repo/pnpm-lock.yaml ./
 COPY --from=builder /repo/pnpm-workspace.yaml ./
 COPY --from=builder /repo/package.json ./
