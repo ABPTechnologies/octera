@@ -3,7 +3,11 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(4000),
-  HOST: z.string().default('0.0.0.0'),
+  // `::` (IPv6 unspecified, dual-stack) — NOT `0.0.0.0`. Railway routes
+  // service-to-service traffic over an IPv6 mesh; an IPv4-only listener
+  // returns 502 at the edge even though the process is up. Dual-stack on
+  // every modern Linux accepts IPv4 connections too.
+  HOST: z.string().default('::'),
 
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url().default('redis://localhost:6379'),

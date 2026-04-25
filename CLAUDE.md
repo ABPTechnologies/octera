@@ -176,6 +176,19 @@ Everything below is **skeleton only** unless marked otherwise. Nothing runs agai
 
 ---
 
+## Hard-won deployment lessons (Railway)
+
+Production blockers we hit standing up the API on Railway and what unstuck them — write these down because they will absolutely bite again:
+
+- **IPv6 dual-stack is required.** Railway's internal service mesh routes via IPv6. An HTTP listener bound to `0.0.0.0` (IPv4 only) is invisible to the proxy and returns 502 at the edge — *even though the process is up and Pino logs say "listening"*. Bind to `::`. The API's env default in `apps/api/src/lib/env.ts` is now `::` for this reason.
+- **PORT must match the proxy target.** Railway's "Generate Service Domain" dialog forwards traffic to one port (we picked 4000); the container has to bind to that exact port. We set `PORT=4000` as an explicit Railway service variable so the Dockerfile ENV doesn't get silently overridden.
+- **Workspace packages need a real build, not source.** `@octera/db` and `@octera/shared` originally had `"main": "./src/index.ts"`. Local dev works because tsx handles TS at runtime; production `node` does not — module load throws "Unknown file extension '.ts'" before pino can emit a single line. Both packages now have `tsconfig.json` + `build` scripts and `main` points at compiled `./dist/index.js`. The Dockerfile builder runs `pnpm --filter @octera/{shared,db,api} build` in order. If you add a third workspace package, build it before any consumer in the same builder stage.
+- **Lockfile dependency categories must match `package.json`.** `pnpm install --frozen-lockfile --prod` reads the lockfile's importer-side `devDependencies` block to decide what to skip. We had `prisma` in `packages/db/package.json` `dependencies` but the lockfile importer entry still listed it under `devDependencies`, so the slim runtime image never got the prisma CLI and `migrate:deploy` died with `sh: prisma: not found`. After moving anything between deps/devDeps, regenerate the lockfile (or hand-patch the importer block) and verify before pushing.
+- **Prisma on Alpine needs explicit `binaryTargets` and `apk add openssl`.** Default `binaryTargets = ["native"]` doesn't ship the `linux-musl-openssl-3.0.x` engine, and Alpine's slim image doesn't ship libssl. Symptom: `prisma:warn Prisma failed to detect the libssl/openssl version` followed by exit 1. Both fixes are now in `schema.prisma` and the Dockerfile.
+- **Silent boots are the worst kind of failure.** When the container went up but produced no Pino logs, the cause was always a *module-load* failure (Node ESM unable to resolve `@octera/db`). Env Zod validation can't help here — it never runs. Diagnose by temporarily setting the start command to `sh -c "... && echo DBG_X && ls -la dist/ && exec node ..."` — the markers tell you exactly where the chain dies.
+
+---
+
 ## Things to be careful about
 
 - **The GIG.tech JWT in the prototype was stored as `OCTERA_JWT_TOKEN`.** JWTs expire. Figure out with GIG.tech whether there's a login flow (likely) or a long-lived service token. A silent token expiry on production would be very bad.
