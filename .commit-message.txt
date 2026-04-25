@@ -1,19 +1,26 @@
-fix: prisma openssl on alpine — binaryTargets + apk openssl
+fix: compile workspace packages to dist (production module resolution)
 
-Container starts on Railway, runs migrate:deploy, then exits 1:
+Production boot was hanging silently — Railway showed "Initializing"
+indefinitely, edge returned 502 "Application failed to respond", and
+the deploy log stopped at "No pending migrations to apply" with no
+output from `node apps/api/dist/index.js` ever.
 
-  prisma:warn Prisma failed to detect the libssl/openssl version to use,
-  and may not work as expected. Defaulting to "openssl-1.1.x".
-  Please manually install OpenSSL and try installing Prisma again.
+Root cause: @octera/db and @octera/shared shipped with package.json
+"main" pointing at .ts source. tsx hides this in dev. In production
+node sees `./src/index.ts`, fails with "Unknown file extension '.ts'"
+at module load, and exits before pino can emit a single line.
 
-Two-part fix because both ends of the path were wrong:
+Fix:
+- packages/{db,shared}: add tsconfig.json, build script, and point
+  main/types/exports at compiled dist/.
+- pnpm-lock.yaml: register typescript as devDep on packages/shared so
+  --frozen-lockfile is happy.
+- apps/api/Dockerfile: build @octera/shared then @octera/db before
+  building @octera/api, and copy dist/ (not src/) into the runner.
 
-1. schema.prisma: add binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
-   so prisma generate downloads the Alpine + openssl-3 query engine
-   alongside the dev-host (macOS) one.
-
-2. apps/api/Dockerfile runner stage: apk add openssl alongside the
-   existing tini + libc6-compat, so libssl is actually present at
-   runtime for the Alpine engine binary to dlopen.
+Local dev still works because the deps stage installs all deps and the
+builder runs the same `pnpm --filter <pkg> build` chain — `pnpm dev`
+resolves through the same package.json so a one-time `pnpm -r build`
+keeps tsx watch happy in dev too.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
