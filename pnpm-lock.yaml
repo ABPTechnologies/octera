@@ -151,10 +151,10 @@ importers:
       argon2:
         specifier: ^0.41.1
         version: 0.41.1
-    devDependencies:
       prisma:
         specifier: ^5.22.0
         version: 5.22.0
+    devDependencies:
       tsx:
         specifier: ^4.19.2
         version: 4.21.0
