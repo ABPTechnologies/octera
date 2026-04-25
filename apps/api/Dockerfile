@@ -75,7 +75,11 @@ RUN pnpm --filter @octera/api build
 # -----------------------------------------------------------------------------
 FROM node:${NODE_VERSION} AS runner
 
-RUN apk add --no-cache tini libc6-compat
+# tini: PID 1 / signal forwarding; libc6-compat: glibc shims; openssl: required
+# by Prisma's query engine binary for the linux-musl-openssl-3.0.x target.
+# Without `openssl` here, `prisma migrate deploy` warns "Prisma failed to detect
+# the libssl/openssl version" and exits 1 at container start.
+RUN apk add --no-cache tini libc6-compat openssl
 RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
 
 WORKDIR /app

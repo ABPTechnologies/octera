@@ -3,7 +3,12 @@
 // Notes on translation decisions are inline — read them before changing anything.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" = host where `prisma generate` runs (local dev: macOS arm64).
+  // "linux-musl-openssl-3.0.x" = production runtime (node:22-alpine, openssl 3.x).
+  // Without the explicit Alpine target, the Prisma client at runtime errors with
+  // "Prisma failed to detect the libssl/openssl version" and exits.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
