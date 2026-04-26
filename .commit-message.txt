@@ -1,19 +1,31 @@
-fix(gigtech): synthesize CustomerSummary when /customers/{cid} also 4xxs
+fix(gigtech): catch 4xx on every per-customer call (SA tokens 404 those too)
 
-Per-customer service accounts can hit /customers/{cid}/{cloudspaces,audits,
-invoices,...} but NOT /customers/{cid} itself — gig.tech apparently treats
-the customer-detail endpoint as VCO-level, even when the SA's scope is
-that exact customer.
+Deploy logs from ed0a849b confirmed: even `/customers/{cid}/cloudspaces`
+and `/customers/{cid}/invoices` 404 'username' for the DynAion service
+account, despite the SA's role granting `Read` on the customer scope.
+gig.tech's IAM apparently requires a `username` claim on every resolver
+that walks user→customer membership, and SA tokens don't carry one.
 
-Result was: listCustomers fell back to getCustomer, which also 4xx'd, and
-the catch returned []. The operator dashboard rendered with 0 customers,
-0 cloudspaces, 0 invoices — even though the data was reachable through
-the per-customer drill-downs.
+Result before this commit: /v1/vco/me, /customers, /locations all
+worked (synthesized fallbacks). /v1/vco/summary still 404'd because
+its internal listCloudspacesFor / listCustomerInvoices calls bubbled
+the 'username' error.
 
-Fix: when getCustomer 4xxs, synthesize a minimal CustomerSummary from
-the JWT's azp (customer_id, name, status='active', billable=true) so
-the dashboard's customer list has the SA's customer in it. Then
-/summary's cloudspaces iterator runs against the real
-/customers/{cid}/cloudspaces path and counts come back populated.
+This commit wraps every per-customer list call in the same
+"4xx + SA token → empty array" pattern:
+ - listCloudspacesFor
+ - listCustomerInvoices
+ - listCustomerCertificates
+ - listCustomerAudits
+
+The dashboard now mounts cleanly with the SA token: customer card
+present, all counts/lists empty (correctly reflecting "we have no
+visibility into ABP's data with this credential"). Drilling into
+ABP shows empty cloudspaces/invoices instead of erroring.
+
+The right long-term fix is a partner-level credential or SA scope
+that includes the relevant API surface — but THAT'S a gig.tech
+config / contract decision, not a code one. Until then the dashboard
+stays usable in mock-vs-actual-empty mode.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
