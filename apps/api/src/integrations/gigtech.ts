@@ -647,7 +647,12 @@ export const gigtech = {
       });
     } catch (err) {
       const sa = detectServiceAccount();
-      if (err instanceof GigtechError && err.status === 404 && sa) {
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        sa
+      ) {
         const synthesized = {
           username: `service-account:${sa.serviceAccountName}`,
           email: `${sa.serviceAccountName}@service-account.local`,
@@ -688,7 +693,8 @@ export const gigtech = {
       const sa = detectServiceAccount();
       if (
         err instanceof GigtechError &&
-        (err.status === 401 || err.status === 403 || err.status === 404) &&
+        err.status >= 400 &&
+        err.status < 500 &&
         sa
       ) {
         try {
@@ -737,7 +743,8 @@ export const gigtech = {
     } catch (err) {
       if (
         err instanceof GigtechError &&
-        (err.status === 401 || err.status === 403 || err.status === 404) &&
+        err.status >= 400 &&
+        err.status < 500 &&
         detectServiceAccount()
       ) {
         return [];
@@ -863,22 +870,43 @@ export const gigtech = {
    * for operator-level "what happened today" views.
    */
   async listVcoAudits(opts: { limit?: number; username?: string; status_code?: number } = {}): Promise<AuditLog[]> {
-    const res = await request({
-      path: '/admin/audits',
-      query: {
-        limit: opts.limit,
-        username: opts.username,
-        status_code: opts.status_code,
-        include_get_requests: true,
-      },
-      schema: AuditsListSchema,
-      mock: () => ({
-        pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
-        // VCO-wide mock = all customer audits (only ABP has any in fixtures).
-        data: [...MOCK_AUDITS],
-      }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: '/admin/audits',
+        query: {
+          limit: opts.limit,
+          username: opts.username,
+          status_code: opts.status_code,
+          include_get_requests: true,
+        },
+        schema: AuditsListSchema,
+        mock: () => ({
+          pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
+          // VCO-wide mock = all customer audits (only ABP has any in fixtures).
+          data: [...MOCK_AUDITS],
+        }),
+      });
+      return res.data;
+    } catch (err) {
+      // /admin/* paths are VCO-wide and reject per-customer SAs (often
+      // 404 'username' because the endpoint resolves a username claim).
+      // Fall back to the SA's own customer audits via the customer-scoped
+      // path, which IS in scope.
+      const sa = detectServiceAccount();
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        sa
+      ) {
+        try {
+          return await this.listCustomerAudits(sa.customerId, opts);
+        } catch {
+          return [];
+        }
+      }
+      throw err;
+    }
   },
 
   // --- VCO-wide invoices (admin scope) --------------------------------------
@@ -888,17 +916,41 @@ export const gigtech = {
    * customer. Useful for operator-level revenue summaries.
    */
   async listVcoInvoices(opts: { limit?: number; month?: number; year?: number } = {}): Promise<Invoice[]> {
-    const res = await request({
-      path: '/admin/invoices',
-      query: { limit: opts.limit, month: opts.month, year: opts.year },
-      schema: InvoicesListSchema,
-      mock: () => ({
-        pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
-        // Same fixtures as customer-scoped — only ABP has invoices in mocks.
-        data: [...MOCK_INVOICES],
-      }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: '/admin/invoices',
+        query: { limit: opts.limit, month: opts.month, year: opts.year },
+        schema: InvoicesListSchema,
+        mock: () => ({
+          pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
+          // Same fixtures as customer-scoped — only ABP has invoices in mocks.
+          data: [...MOCK_INVOICES],
+        }),
+      });
+      return res.data;
+    } catch (err) {
+      // VCO-wide /admin/invoices isn't visible to per-customer SAs. Fall
+      // back to listing the SA's own customer invoices so the operator
+      // dashboard's "this month" tile still has something to render.
+      const sa = detectServiceAccount();
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        sa
+      ) {
+        try {
+          return await this.listCustomerInvoices(sa.customerId, {
+            limit: opts.limit,
+            month: opts.month,
+            year: opts.year,
+          });
+        } catch {
+          return [];
+        }
+      }
+      throw err;
+    }
   },
 
   // --- Audit logs -----------------------------------------------------------
