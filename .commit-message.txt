@@ -1,29 +1,25 @@
-fix(gigtech): tolerate per-customer service-account JWTs
+fix(gigtech): widen SA fallback to all 4xx and to VCO admin endpoints
 
-The DynAion service account scoped to abp_technologies_1 works against
-/customers/{cid}/* paths but not against the VCO-wide endpoints —
-gig.tech's /me 404s with body 'username' (no username claim in the
-SA token), and /customers 401/403s (VCO-level enumeration).
+Extends the per-customer service-account tolerance from commit 86e0b45.
 
-Result before this change: the operator console errors out with
-"Couldn't load operator data — Not Found: 'username'" because the
-dashboard's Promise.all of /v1/vco/{me,customers,locations,...}
-propagates the first failure.
+Two issues that were still breaking the operator dashboard:
 
-Fix: detect service-account tokens by parsing the JWT's `azp` claim
-(format `portal-octera-cloud.customers.{cid}.service_accounts.{name}`)
-and gracefully degrade three calls:
+1. /admin/audits and /admin/invoices (used by the dashboard's `/summary`
+   endpoint and the audits page) hit /admin/* paths, which per-customer
+   SAs can't reach. listVcoAudits and listVcoInvoices now catch the 4xx,
+   detect the service-account scope, and fall back to the per-customer
+   variants — so the operator dashboard's "this month" tile and audit
+   log render against the SA's own customer instead of erroring out.
 
- - getMe: on 404 → synthesize a Me with vco_name="Octera (scoped to
-   {cid})", customers=[{customer_id: cid, name: cid}], so the
-   identity card and customer list still render.
- - listCustomers: on 4xx → fall back to fetching just the SA's own
-   customer via /customers/{cid} and return as a 1-element list.
- - listLocations: on 4xx → return empty array; the dashboard handles
-   "No locations available" already.
+2. The catch range in getMe / listCustomers / listLocations was too
+   narrow (specific 401/403/404). gig.tech can return other 4xx codes
+   for the same "wrong token shape" condition. All four methods now
+   catch any 4xx and trigger the SA fallback.
 
-Once a partner-level credential lands the fallbacks become dead code —
-the real /me and /customers responses come back. Detection is fully
-contained in detectServiceAccount() at the top of the file.
+Caveat we'll learn about: if gig.tech rejects /customers/{cid}/audits
+or /customers/{cid}/invoices for the SA too, listVcoAudits and
+listVcoInvoices return [] silently. That's the right UX (dashboard
+mounts with empty tiles) but worth surfacing to the operator with a
+"scoped" badge later.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
