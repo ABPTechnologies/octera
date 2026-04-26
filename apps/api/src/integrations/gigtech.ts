@@ -58,6 +58,58 @@ export function isMockMode(): boolean {
   return !env.GIGTECH_JWT;
 }
 
+// ---------------------------------------------------------------------------
+// Service-account JWT detection
+//
+// gig.tech issues two kinds of JWTs:
+//   - User session tokens (carry a `username` claim) — work against `/me`,
+//     `/customers`, and other VCO-wide endpoints.
+//   - Service-account tokens (no `username`; carry an `azp` like
+//     `portal-octera-cloud.customers.{cid}.service_accounts.{name}`) — only
+//     work against the `/customers/{cid}/*` paths the SA is scoped to.
+//
+// When we're holding a per-customer SA, hitting `/me` 404s with body
+// `'username'` and hitting `/customers` 401/403s. The integration client
+// detects this case and synthesizes safe fallbacks so the operator
+// console still renders against the one customer the SA can see.
+// Once we have a partner-level / VCO-wide credential, this fallback path
+// becomes dead code — the real /me and /customers responses come back.
+// ---------------------------------------------------------------------------
+
+interface ServiceAccountIdentity {
+  customerId: string;
+  serviceAccountName: string;
+  azp: string;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const decoded = Buffer.from(parts[1], 'base64url').toString('utf8');
+    const parsed: unknown = JSON.parse(decoded);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * If GIGTECH_JWT is a per-customer service-account token, returns the
+ * scope info we can recover from the JWT itself. Returns null for user
+ * tokens or when the env var is unset.
+ */
+export function detectServiceAccount(): ServiceAccountIdentity | null {
+  if (!env.GIGTECH_JWT) return null;
+  const payload = decodeJwtPayload(env.GIGTECH_JWT);
+  if (!payload) return null;
+  const azp = typeof payload.azp === 'string' ? payload.azp : null;
+  if (!azp) return null;
+  const m = azp.match(/customers\.([^.]+)\.service_accounts\.([^.]+)/);
+  if (!m) return null;
+  return { customerId: m[1], serviceAccountName: m[2], azp };
+}
+
 interface RequestOptions<T> {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
@@ -578,26 +630,78 @@ const MOCK_ME = {
 export const gigtech = {
   // --- Session / identity ---------------------------------------------------
 
-  /** GET /me — returns the VCO operator profile + customer memberships. */
+  /**
+   * GET /me — returns the VCO operator profile + customer memberships.
+   *
+   * Per-customer service-account tokens don't carry a `username` claim, so
+   * gig.tech responds 404 'username' here. We catch that and synthesize a
+   * minimal Me derived from the JWT's `azp` so the operator console still
+   * renders. Real (user/partner) tokens take the happy path.
+   */
   async getMe(): Promise<Me> {
-    return request({
-      path: '/me',
-      schema: MeSchema,
-      mock: () => MOCK_ME,
-    });
+    try {
+      return await request({
+        path: '/me',
+        schema: MeSchema,
+        mock: () => MOCK_ME,
+      });
+    } catch (err) {
+      const sa = detectServiceAccount();
+      if (err instanceof GigtechError && err.status === 404 && sa) {
+        const synthesized = {
+          username: `service-account:${sa.serviceAccountName}`,
+          email: `${sa.serviceAccountName}@service-account.local`,
+          firstname: 'Service',
+          lastname: `Account (${sa.serviceAccountName})`,
+          is_admin: false,
+          vco_website: 'octera.cloud',
+          vco_name: `Octera (scoped to ${sa.customerId})`,
+          customers: [{ customer_id: sa.customerId, name: sa.customerId }],
+          admin_of_customers: [],
+        } satisfies Me;
+        return synthesized;
+      }
+      throw err;
+    }
   },
 
   // --- Customers ------------------------------------------------------------
 
-  /** GET /customers — list customers visible to the authenticated principal. */
+  /**
+   * GET /customers — list customers visible to the authenticated principal.
+   *
+   * VCO-wide enumeration. Per-customer SAs can't hit this; we fall back to
+   * fetching just the single customer the SA is scoped to so the operator
+   * console still has a customer to render. Once a partner credential is
+   * wired up the fallback won't trigger and the full list comes through.
+   */
   async listCustomers(opts: { limit?: number; search?: string } = {}): Promise<CustomerSummary[]> {
-    const res = await request({
-      path: '/customers',
-      query: { limit: opts.limit, search: opts.search },
-      schema: CustomerListSchema,
-      mock: () => ({ pagination: { count: MOCK_CUSTOMERS.length }, data: [...MOCK_CUSTOMERS] }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: '/customers',
+        query: { limit: opts.limit, search: opts.search },
+        schema: CustomerListSchema,
+        mock: () => ({ pagination: { count: MOCK_CUSTOMERS.length }, data: [...MOCK_CUSTOMERS] }),
+      });
+      return res.data;
+    } catch (err) {
+      const sa = detectServiceAccount();
+      if (
+        err instanceof GigtechError &&
+        (err.status === 401 || err.status === 403 || err.status === 404) &&
+        sa
+      ) {
+        try {
+          const c = await this.getCustomer(sa.customerId);
+          return [c];
+        } catch {
+          // Even the scoped fetch failed — return empty so the dashboard
+          // still mounts instead of erroring out.
+          return [];
+        }
+      }
+      throw err;
+    }
   },
 
   /** GET /customers/{cid} — full customer info. */
@@ -615,14 +719,31 @@ export const gigtech = {
 
   // --- Locations ------------------------------------------------------------
 
-  /** GET /locations — VCO datacenters available for deployment. */
+  /**
+   * GET /locations — VCO datacenters available for deployment.
+   *
+   * Likely a VCO-wide endpoint that per-customer SAs can't hit. Fall back
+   * to an empty list rather than blowing up the dashboard. Real production
+   * with a partner credential will return the full set.
+   */
   async listLocations(): Promise<Location[]> {
-    const res = await request({
-      path: '/locations',
-      schema: LocationsListSchema,
-      mock: () => ({ result: [...MOCK_LOCATIONS] }),
-    });
-    return res.result;
+    try {
+      const res = await request({
+        path: '/locations',
+        schema: LocationsListSchema,
+        mock: () => ({ result: [...MOCK_LOCATIONS] }),
+      });
+      return res.result;
+    } catch (err) {
+      if (
+        err instanceof GigtechError &&
+        (err.status === 401 || err.status === 403 || err.status === 404) &&
+        detectServiceAccount()
+      ) {
+        return [];
+      }
+      throw err;
+    }
   },
 
   // --- Cloudspaces ----------------------------------------------------------
