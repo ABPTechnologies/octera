@@ -1,26 +1,29 @@
-feat(auth): change-password endpoint + Settings UI
+fix(gigtech): tolerate per-customer service-account JWTs
 
-POST /v1/auth/change-password (authenticated) verifies the user's current
-password, hashes the new one, and revokes every OTHER session belonging
-to the user — keeping the caller's own session alive so they don't get
-bounced out mid-flow. The current-password check defends against
-access-token-theft pivoting to a permanent password change.
+The DynAion service account scoped to abp_technologies_1 works against
+/customers/{cid}/* paths but not against the VCO-wide endpoints —
+gig.tech's /me 404s with body 'username' (no username claim in the
+SA token), and /customers 401/403s (VCO-level enumeration).
 
-API changes:
- - changePassword() helper in auth.service.ts
- - new AuthError code 'wrong_current_password'
- - POST /v1/auth/change-password route, Zod-validated, min(12) on new
- - rejects same-as-old with 400 same_password
- - returns 403 wrong_current_password vs 500 on real errors
+Result before this change: the operator console errors out with
+"Couldn't load operator data — Not Found: 'username'" because the
+dashboard's Promise.all of /v1/vco/{me,customers,locations,...}
+propagates the first failure.
 
-Web changes:
- - Settings page: ChangePasswordPanel replaces the placeholder, with
-   live validation (length, mismatch, same-as-current), correct
-   autocomplete tokens, and clear ok/error feedback.
- - PasswordField helper to keep the three inputs consistent.
+Fix: detect service-account tokens by parsing the JWT's `azp` claim
+(format `portal-octera-cloud.customers.{cid}.service_accounts.{name}`)
+and gracefully degrade three calls:
 
-Other-session revocation is silent — callers using a different browser
-just get 401 on their next refresh and bounce to /login. This is the
-expected security UX for "I changed my password" flows.
+ - getMe: on 404 → synthesize a Me with vco_name="Octera (scoped to
+   {cid})", customers=[{customer_id: cid, name: cid}], so the
+   identity card and customer list still render.
+ - listCustomers: on 4xx → fall back to fetching just the SA's own
+   customer via /customers/{cid} and return as a 1-element list.
+ - listLocations: on 4xx → return empty array; the dashboard handles
+   "No locations available" already.
+
+Once a partner-level credential lands the fallbacks become dead code —
+the real /me and /customers responses come back. Detection is fully
+contained in detectServiceAccount() at the top of the file.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
