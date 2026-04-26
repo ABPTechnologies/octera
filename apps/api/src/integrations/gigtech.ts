@@ -697,13 +697,24 @@ export const gigtech = {
         err.status < 500 &&
         sa
       ) {
+        // Try the scoped customer-detail path first; if that 4xxs too
+        // (gig.tech treats /customers/{cid} as VCO-level even for an SA
+        // scoped under that customer), fall back to a synthesized
+        // CustomerSummary derived from the JWT's azp. The downstream
+        // /customers/{cid}/cloudspaces, /audits, /invoices paths ARE
+        // visible to the SA, so the dashboard can still drill into them.
         try {
           const c = await this.getCustomer(sa.customerId);
           return [c];
         } catch {
-          // Even the scoped fetch failed — return empty so the dashboard
-          // still mounts instead of erroring out.
-          return [];
+          return [
+            {
+              customer_id: sa.customerId,
+              name: sa.customerId,
+              status: 'active',
+              billable: true,
+            },
+          ];
         }
       }
       throw err;
