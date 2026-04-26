@@ -766,14 +766,34 @@ export const gigtech = {
 
   // --- Cloudspaces ----------------------------------------------------------
 
-  /** GET /customers/{cid}/cloudspaces — list VDCs for a customer. */
+  /**
+   * GET /customers/{cid}/cloudspaces — list VDCs for a customer.
+   *
+   * In theory this is a per-customer path the SA's role grants `Read` on,
+   * but in practice some gig.tech deployments still 4xx 'username' for it.
+   * On any 4xx with an SA token, return an empty list rather than
+   * propagate the error — the dashboard's `/summary` iterator and the
+   * customer-detail page handle empty cloudspaces fine.
+   */
   async listCloudspacesFor(customerId: string): Promise<Cloudspace[]> {
-    const res = await request({
-      path: `/customers/${encodeURIComponent(customerId)}/cloudspaces`,
-      schema: CloudspacesListSchema,
-      mock: () => ({ result: [], locations: [{ location: 'be-mac-dc01-002', status: 'OK' }] }),
-    });
-    return res.result;
+    try {
+      const res = await request({
+        path: `/customers/${encodeURIComponent(customerId)}/cloudspaces`,
+        schema: CloudspacesListSchema,
+        mock: () => ({ result: [], locations: [{ location: 'be-mac-dc01-002', status: 'OK' }] }),
+      });
+      return res.result;
+    } catch (err) {
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        detectServiceAccount()
+      ) {
+        return [];
+      }
+      throw err;
+    }
   },
 
   /** GET /customers/{cid}/cloudspaces/{csid} — single cloudspace detail. */
@@ -821,12 +841,24 @@ export const gigtech = {
 
   /** GET /customers/{cid}/certificates/ssl — customer-level cert store. */
   async listCustomerCertificates(customerId: string): Promise<CertificateSummary[]> {
-    const res = await request({
-      path: `/customers/${encodeURIComponent(customerId)}/certificates/ssl`,
-      schema: CustomerCertificatesListSchema,
-      mock: () => ({ data: [] }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: `/customers/${encodeURIComponent(customerId)}/certificates/ssl`,
+        schema: CustomerCertificatesListSchema,
+        mock: () => ({ data: [] }),
+      });
+      return res.data;
+    } catch (err) {
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        detectServiceAccount()
+      ) {
+        return [];
+      }
+      throw err;
+    }
   },
 
   /** POST /customers/{cid}/certificates/ssl/{domain} — request new LE cert. */
@@ -854,24 +886,36 @@ export const gigtech = {
     customerId: string,
     opts: { limit?: number; month?: number; year?: number; search?: string } = {}
   ): Promise<Invoice[]> {
-    const res = await request({
-      path: `/customers/${encodeURIComponent(customerId)}/invoices`,
-      query: {
-        limit: opts.limit,
-        search: opts.search,
-        month: opts.month,
-        year: opts.year,
-      },
-      schema: InvoicesListSchema,
-      mock: () => ({
-        pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
-        // Only return invoices actually belonging to this customer_id so the
-        // mock respects the path param. Keeps /iriscall_1/invoices empty as
-        // a useful negative test.
-        data: MOCK_INVOICES.filter((i) => i.customer_id === customerId),
-      }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: `/customers/${encodeURIComponent(customerId)}/invoices`,
+        query: {
+          limit: opts.limit,
+          search: opts.search,
+          month: opts.month,
+          year: opts.year,
+        },
+        schema: InvoicesListSchema,
+        mock: () => ({
+          pagination: { count: MOCK_INVOICES.length, limit: 25, pages: 1 },
+          // Only return invoices actually belonging to this customer_id so the
+          // mock respects the path param. Keeps /iriscall_1/invoices empty as
+          // a useful negative test.
+          data: MOCK_INVOICES.filter((i) => i.customer_id === customerId),
+        }),
+      });
+      return res.data;
+    } catch (err) {
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        detectServiceAccount()
+      ) {
+        return [];
+      }
+      throw err;
+    }
   },
 
   // --- VCO-wide audits (admin scope) ----------------------------------------
@@ -974,22 +1018,34 @@ export const gigtech = {
     customerId: string,
     opts: { limit?: number; username?: string; status_code?: number } = {}
   ): Promise<AuditLog[]> {
-    const res = await request({
-      path: `/customers/${encodeURIComponent(customerId)}/audits`,
-      query: {
-        limit: opts.limit,
-        username: opts.username,
-        status_code: opts.status_code,
-        // Default: include reads. Toggle off if surface gets noisy.
-        include_get_requests: true,
-      },
-      schema: AuditsListSchema,
-      mock: () => ({
-        pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
-        data: MOCK_AUDITS.filter((a) => a.customer_id === customerId),
-      }),
-    });
-    return res.data;
+    try {
+      const res = await request({
+        path: `/customers/${encodeURIComponent(customerId)}/audits`,
+        query: {
+          limit: opts.limit,
+          username: opts.username,
+          status_code: opts.status_code,
+          // Default: include reads. Toggle off if surface gets noisy.
+          include_get_requests: true,
+        },
+        schema: AuditsListSchema,
+        mock: () => ({
+          pagination: { count: MOCK_AUDITS.length, limit: 25, pages: 1 },
+          data: MOCK_AUDITS.filter((a) => a.customer_id === customerId),
+        }),
+      });
+      return res.data;
+    } catch (err) {
+      if (
+        err instanceof GigtechError &&
+        err.status >= 400 &&
+        err.status < 500 &&
+        detectServiceAccount()
+      ) {
+        return [];
+      }
+      throw err;
+    }
   },
 
   // --- Domain search / registration (DEFERRED) ------------------------------
