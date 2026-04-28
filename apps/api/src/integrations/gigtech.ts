@@ -5,17 +5,28 @@
  * talks to gig.tech's REST API at https://portal.octera.cloud/api/1/ on behalf of
  * the VCO operator (us) to read and manage VCO-level + customer-scoped resources.
  *
- * ⚠️ CREDENTIAL NOTE (as of 2026-04-24):
+ * ⚠️ CREDENTIAL NOTE (revised 2026-04-28):
  * -------------------------------------------------------------------------------
- * This client expects env.GIGTECH_JWT to be a **VCO-level partner service
- * credential** — a long-lived JWT scoped to act across all customers under the
- * VCO. User-session JWTs issued by iam.octera.cloud's browser login flow have
- * `user:*` scopes and are REJECTED by most REST endpoints (HTTP 401) even
- * though they decode fine. Do not use a user session token here.
+ * Two credential shapes are supported:
  *
- * Until a proper partner credential is available, the client falls back to
- * MOCK MODE (see `mockResponse` below) so the rest of the app keeps running
- * locally. Mock mode is indicated in logs and MUST NOT be used in production.
+ *   1. GIGTECH_CLIENT_ID + GIGTECH_CLIENT_SECRET — an IAM access-token pair
+ *      created in iam.octera.cloud → Settings → Access Tokens. We exchange
+ *      these at runtime for a short-lived user-session JWT (carries the
+ *      `username` claim that gig.tech's per-customer resolvers require) and
+ *      cache it until ~30s before its `exp`. This is the PRODUCTION path.
+ *
+ *   2. GIGTECH_JWT — a static bearer token. Useful for local dev or
+ *      one-off probes; falls back to mock mode when missing.
+ *
+ * The earlier "VCO Service Account" path (per-customer SA JWTs) is still
+ * detected for backwards compat: when its 4xx fallbacks fire, the operator
+ * console renders empty arrays instead of erroring. SAs lack `username` and
+ * 404 against most resolvers — that's why the IAM access-token pair is the
+ * real fix.
+ *
+ * When neither shape is configured, the client falls back to MOCK MODE so
+ * the rest of the app keeps running locally. Mock mode is indicated in logs
+ * and MUST NOT be used in production.
  *
  * Spec reference: apps/api/src/integrations/gigtech/swagger.json (618KB,
  * 395 paths, 515 definitions — the authoritative contract).
@@ -55,7 +66,109 @@ export class GigtechError extends Error {
 
 /** True when we don't have a real credential; callers see canned fixture data. */
 export function isMockMode(): boolean {
-  return !env.GIGTECH_JWT;
+  return !env.GIGTECH_JWT && !isClientCredentialsMode();
+}
+
+/** True when an IAM access-token pair (client_id + secret) is configured. */
+function isClientCredentialsMode(): boolean {
+  return Boolean(env.GIGTECH_CLIENT_ID && env.GIGTECH_CLIENT_SECRET);
+}
+
+// ---------------------------------------------------------------------------
+// IAM access-token exchange (client_credentials)
+//
+// When GIGTECH_CLIENT_ID + GIGTECH_CLIENT_SECRET are set, we POST them to
+// iam.octera.cloud's OAuth endpoint and get back a short-lived user-session
+// JWT. We cache it until ~30s before its `exp` claim and refresh on demand.
+//
+// Endpoint shape follows the ItsYou.Online lineage that gig.tech's IAM is
+// built on:
+//   POST {GIGTECH_IAM_BASE}/v1/oauth/access_token
+//   Content-Type: application/x-www-form-urlencoded
+//   grant_type=client_credentials&client_id=…&client_secret=…[&scope=…]
+//
+// If the IAM has moved to a different path or response shape, the deploy log
+// will surface a clear "iam_oauth_failed" GigtechError with the upstream
+// status + body slice — adjust GIGTECH_IAM_BASE / endpoint here from there.
+// ---------------------------------------------------------------------------
+
+let cachedAccessToken: { token: string; expiresAtMs: number } | null = null;
+
+/** Returns the bearer token to use for the next gig.tech request. */
+async function getAccessToken(): Promise<string> {
+  if (isClientCredentialsMode()) {
+    const now = Date.now();
+    if (cachedAccessToken && cachedAccessToken.expiresAtMs > now + 60_000) {
+      return cachedAccessToken.token;
+    }
+    return refreshAccessToken();
+  }
+  if (env.GIGTECH_JWT) return env.GIGTECH_JWT;
+  throw new GigtechError(0, 'no_credentials', 'No gig.tech credential configured');
+}
+
+async function refreshAccessToken(): Promise<string> {
+  if (!env.GIGTECH_CLIENT_ID || !env.GIGTECH_CLIENT_SECRET) {
+    throw new GigtechError(0, 'no_credentials', 'GIGTECH_CLIENT_ID/SECRET not set');
+  }
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: env.GIGTECH_CLIENT_ID,
+    client_secret: env.GIGTECH_CLIENT_SECRET,
+    response_type: 'id_token',
+  });
+  if (env.GIGTECH_OAUTH_SCOPE) body.set('scope', env.GIGTECH_OAUTH_SCOPE);
+
+  const tokenUrl = `${env.GIGTECH_IAM_BASE.replace(/\/$/, '')}/v1/oauth/access_token`;
+  const res = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: body.toString(),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new GigtechError(
+      res.status,
+      'iam_oauth_failed',
+      `IAM oauth exchange failed (${res.status}) at ${tokenUrl}: ${text.slice(0, 300)}`,
+      text
+    );
+  }
+
+  // ItsYou.Online historically returns JSON {access_token, token_type, scope}.
+  // Some shipped variants return a bare JWT. Handle both.
+  let token: string;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    token =
+      parsed && typeof parsed === 'object' && 'access_token' in parsed
+        ? String((parsed as { access_token: unknown }).access_token)
+        : text;
+  } catch {
+    token = text;
+  }
+  if (!token || token.split('.').length < 2) {
+    throw new GigtechError(
+      0,
+      'iam_oauth_bad_token',
+      `IAM returned non-JWT response: ${text.slice(0, 120)}`,
+      text
+    );
+  }
+
+  // Use the JWT's own exp as cache TTL (with 30s safety margin); fall back
+  // to a 1h default if the token has no exp.
+  const payload = decodeJwtPayload(token);
+  const expSec =
+    typeof payload?.exp === 'number'
+      ? payload.exp - 30
+      : Math.floor(Date.now() / 1000) + 3600 - 30;
+
+  cachedAccessToken = { token, expiresAtMs: expSec * 1000 };
+  return token;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +213,13 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
  * tokens or when the env var is unset.
  */
 export function detectServiceAccount(): ServiceAccountIdentity | null {
-  if (!env.GIGTECH_JWT) return null;
-  const payload = decodeJwtPayload(env.GIGTECH_JWT);
+  // Inspect whichever token is currently in use — the cached oauth-exchanged
+  // JWT, or the static GIGTECH_JWT. Client_credentials tokens for an IAM PAT
+  // are user-session-shaped (carry `username`, no SA `azp` pattern) so this
+  // will correctly return null and the SA fallback paths won't kick in.
+  const token = cachedAccessToken?.token ?? env.GIGTECH_JWT;
+  if (!token) return null;
+  const payload = decodeJwtPayload(token);
   if (!payload) return null;
   const azp = typeof payload.azp === 'string' ? payload.azp : null;
   if (!azp) return null;
@@ -146,14 +264,16 @@ async function request<T>(opts: RequestOptions<T>): Promise<T> {
     }
   }
 
+  const accessToken = await getAccessToken();
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${env.GIGTECH_JWT}`,
+    Authorization: `Bearer ${accessToken}`,
     Accept: 'application/json',
   };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
 
   let lastErr: unknown;
+  let triedTokenRefresh = false;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const res = await fetch(url, {
@@ -161,6 +281,15 @@ async function request<T>(opts: RequestOptions<T>): Promise<T> {
         headers,
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       });
+
+      // 401 with client_credentials mode: cache may be stale (clock skew, or
+      // token revoked). Drop the cache, mint a fresh token, and retry once.
+      if (res.status === 401 && isClientCredentialsMode() && !triedTokenRefresh) {
+        triedTokenRefresh = true;
+        cachedAccessToken = null;
+        headers.Authorization = `Bearer ${await getAccessToken()}`;
+        continue;
+      }
 
       // Retry 5xx and 429; anything else is terminal.
       if (res.status >= 500 || res.status === 429) {

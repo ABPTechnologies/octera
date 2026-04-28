@@ -22,7 +22,24 @@ const envSchema = z.object({
 
   // Integrations — all optional for local dev; required in prod.
   GIGTECH_API_BASE: z.string().url().default('https://portal.octera.cloud/api/1'),
+  // Two credential shapes are supported:
+  //   1) GIGTECH_JWT — a static bearer token (legacy, fine for local dev).
+  //   2) GIGTECH_CLIENT_ID + GIGTECH_CLIENT_SECRET — an IAM-issued access-token
+  //      pair (Settings → Access Tokens in iam.octera.cloud). The integration
+  //      exchanges them for a short-lived user-session JWT at runtime and
+  //      auto-refreshes before expiry. This is the production path because
+  //      the resulting JWT carries the `username` claim that gig.tech's
+  //      per-customer resolvers require.
+  // When both shapes are set, client_credentials wins.
   GIGTECH_JWT: z.string().optional(),
+  GIGTECH_CLIENT_ID: z.string().optional(),
+  GIGTECH_CLIENT_SECRET: z.string().optional(),
+  GIGTECH_IAM_BASE: z.string().url().default('https://iam.octera.cloud'),
+  // Optional OAuth scope to send during the client_credentials exchange.
+  // ItsYou.Online-style: e.g. `user:memberof:abp_technologies_1.admin` to
+  // assume an org-scoped role. Empty default means "use the PAT's full
+  // user-level access" — which is what we want for the operator console.
+  GIGTECH_OAUTH_SCOPE: z.string().default(''),
 
   GODADDY_API_BASE: z.string().url().optional(),
   GODADDY_API_KEY: z.string().optional(),
