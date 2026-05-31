@@ -16,6 +16,7 @@ import { userRoutes } from './routes/users.js';
 import { domainRoutes } from './routes/domains.js';
 import { healthRoutes } from './routes/health.js';
 import { vcoRoutes } from './routes/vco.js';
+import { whiteLabelRoutes } from './routes/whitelabel.js';
 import { stripeRoutes } from './routes/stripe.js';
 import { closeQueues } from './jobs/index.js';
 import { GigtechError } from './integrations/gigtech.js';
@@ -62,6 +63,7 @@ async function start() {
   await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(domainRoutes, { prefix: '/v1/domains' });
   await app.register(vcoRoutes, { prefix: '/v1/vco' });
+  await app.register(whiteLabelRoutes, { prefix: '/v1/whitelabels' });
   await app.register(stripeRoutes, { prefix: '/v1/stripe' });
 
   // 404 handler

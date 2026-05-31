@@ -119,6 +119,36 @@ export const vcoRoutes: FastifyPluginAsync = async (app) => {
     }
   );
 
+  /**
+   * POST /v1/vco/customers/:customerId/cloudspaces
+   * Provision a new cloudspace (VDC) — the create side the Perpetual Markets
+   * white-label factory uses (one cloudspace per WL). Net-new per PHASE-0 §3.
+   * Idempotent via the body's `idempotencyKey` (the WL slug).
+   */
+  app.post<{
+    Params: { customerId: string };
+    Body: {
+      name: string;
+      location: string;
+      cloudspaceMode?: string;
+      routerType?: string;
+      idempotencyKey?: string;
+    };
+  }>(
+    '/customers/:customerId/cloudspaces',
+    adminOnly,
+    async (req) => {
+      const { name, location, cloudspaceMode, routerType, idempotencyKey } =
+        req.body;
+      const cloudspace = await gigtech.createCloudspace(
+        req.params.customerId,
+        { name, location, cloudspaceMode, routerType },
+        idempotencyKey
+      );
+      return { cloudspace };
+    }
+  );
+
   // --- SSL / ingress (per customer) ----------------------------------------
   // These unblock the ABP cert renewal use case without SSH access.
 

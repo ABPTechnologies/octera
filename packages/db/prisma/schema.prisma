@@ -812,3 +812,115 @@ model Alert {
   @@index([userId])
   @@index([serviceType, serviceId])
 }
+
+// ===========================================================================
+// Perpetual Markets — White Label factory (Phase 1 §2)
+//
+// Canonical config record for a federated-broker white label. Lives here in
+// octera (next to VCO) because the factory provisions a cloudspace per WL.
+// It holds authored config + soft references into the other two systems
+// (yina-copier Sentinel, yina-trader risk layer). hostingPlanId/domainId are
+// soft FKs (plain ids, no Prisma relation) to avoid back-relations on the
+// infra models. The 232 WCL orphans + 21 feeders are a SHARED risk layer
+// (Gate-1 decision) — WLs attach via riskRoutingPolicy, they do NOT own a row.
+// ===========================================================================
+
+enum WhiteLabelStatus {
+  DRAFT
+  CONFIG_READY
+  PROVISIONING
+  LIVE_PAPER
+  LIVE
+  SUSPENDED
+  DECOMMISSIONED
+}
+
+enum WlAdapterFamily {
+  CTRADER_FIX
+  IBKR_WEBAPI
+  MT5_MANAGER
+  STUB
+}
+
+enum WlProfile {
+  BROKER
+  FUNDED_PROP
+}
+
+model WhiteLabel {
+  id          String           @id @default(cuid())
+
+  // Identity
+  slug        String           @unique
+  seq         Int              @unique
+  displayName String
+  legalEntity String?
+
+  // Jurisdiction & compliance (seed the per-VCS yina-trader.whitelabel row)
+  jurisdiction         String
+  regulator            String?
+  requiredKycLevel     String?
+  complianceAuditLevel String          @default("writes_only")
+  isolationMode        String          @default("strict_customer_isolation")
+
+  // Broker adapter
+  adapterFamily WlAdapterFamily
+  brokerName    String?
+  profile       WlProfile        @default(BROKER)
+  adapterConfig Json             @default("{}")
+  /// Broker-credential key into the per-VCS sealed secret (never plaintext).
+  adapterSecretKey String?
+
+  // Branding & hosting (one cloudspace per WL). Soft FKs (plain ids).
+  brandTokens   Json    @default("{}")
+  domainId      String?
+  subdomain     String?
+  hostingPlanId String? @unique
+  vcsRegion     String?
+  vcsSize       String?
+  pluginSet     String[] @default([])
+
+  // Federation (1:1 ownership)
+  copierSentinelSlug      String?  @unique
+  copierSentinelStatus    String?
+  originAccountExternalId String?
+
+  // Risk-layer ATTACHMENT (shared layer; not ownership)
+  riskRoutingPolicy Json     @default("{}")
+  revenueSharePct   Decimal? @db.Decimal(7, 4)
+  lossRatePct       Decimal? @db.Decimal(7, 4) @default(0.21)
+  swapCoveragePct   Decimal? @db.Decimal(7, 4) @default(100)
+
+  // Secrets (per-VCS sealed secret reference) + auth
+  sealedSecretRef  String?
+  sioRealmClientId String?
+  cidGlobalRef     String?
+
+  // Lifecycle
+  status        WhiteLabelStatus @default(DRAFT)
+  provisionedAt DateTime?
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  provisioningRuns WhiteLabelProvisioningRun[]
+
+  @@index([status])
+  @@index([adapterFamily])
+}
+
+model WhiteLabelProvisioningRun {
+  id           String     @id @default(cuid())
+  whiteLabelId String
+  whiteLabel   WhiteLabel @relation(fields: [whiteLabelId], references: [id], onDelete: Cascade)
+  /// Mock-first: real provisioning only when false.
+  dryRun       Boolean    @default(true)
+  status       String     @default("pending")
+  /// Ordered step results: cloudspace, deploy, sentinel_register,
+  /// risk_layer_attach, auth_wire, healthcheck — each {name,status,detail,at}.
+  steps        Json       @default("[]")
+  startedAt    DateTime   @default(now())
+  finishedAt   DateTime?
+
+  @@index([whiteLabelId])
+}

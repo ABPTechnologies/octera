@@ -939,6 +939,50 @@ export const gigtech = {
     });
   },
 
+  /**
+   * POST /customers/{cid}/cloudspaces — provision a new cloudspace (VDC).
+   *
+   * This is the create side that the Perpetual Markets white-label factory
+   * needs: one cloudspace per WL (PHASE-1 decision #4). Previously the VCO
+   * surface was read-only (list/detail + cert renew); this is the net-new
+   * provisioning call identified in PHASE-0 §3.
+   *
+   * Idempotent via the caller-supplied `idempotencyKey` (use the WL slug) so a
+   * retried provision does not create a second cloudspace. In mock mode it
+   * echoes a DEPLOYED cloudspace with a deterministic id derived from the name.
+   */
+  async createCloudspace(
+    customerId: string,
+    spec: {
+      name: string;
+      location: string;
+      /** Optional sizing/router hints passed through to gig.tech. */
+      cloudspaceMode?: string;
+      routerType?: string;
+    },
+    idempotencyKey?: string
+  ) {
+    return request({
+      method: 'POST',
+      path: `/customers/${encodeURIComponent(customerId)}/cloudspaces`,
+      body: {
+        name: spec.name,
+        location: spec.location,
+        ...(spec.cloudspaceMode ? { cloudspace_mode: spec.cloudspaceMode } : {}),
+        ...(spec.routerType ? { router_type: spec.routerType } : {}),
+      },
+      idempotencyKey: idempotencyKey ?? spec.name,
+      schema: CloudspaceSchema,
+      mock: () => ({
+        cloudspace_id: `cs_${spec.name.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`,
+        name: spec.name,
+        status: 'DEPLOYED',
+        location: spec.location,
+        cloudspace_mode: spec.cloudspaceMode ?? 'default',
+      }),
+    });
+  },
+
   // --- Ingress / reverse proxies / SSL --------------------------------------
   // Needed for the ABP cert renewal path and for future self-care SSL panel.
 
