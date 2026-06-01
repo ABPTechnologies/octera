@@ -59,8 +59,11 @@ function fqdn(input: WlProvisionInput): string {
 // --- Copier sentinel registration ------------------------------------------
 export interface SentinelRegisterResult {
   slug: string;
-  hmacSecret: string;
+  /** Plaintext secret — present only on create/rotate, null on idempotent
+   *  re-register of an existing slug (the copier never reveals it twice). */
+  hmacSecret: string | null;
   hmacSecretMask: string;
+  created: boolean;
 }
 
 export class CopierSentinelClient {
@@ -74,26 +77,24 @@ export class CopierSentinelClient {
     baseUrl: string;
     supportedFeatures?: string[];
     authorizedAccountExternalIds?: string[];
+    rotate?: boolean;
   }): Promise<SentinelRegisterResult> {
     const path = this.cfg.path ?? "/api/copier/sentinels";
     const base = this.cfg.baseUrl.endsWith("/") ? this.cfg.baseUrl.slice(0, -1) : this.cfg.baseUrl;
     const headers: Record<string, string> = this.cfg.token ? { Authorization: `Bearer ${this.cfg.token}` } : {};
     const { json } = await http(this.cfg.fetchImpl, "POST", `${base}${path}`, headers, reg);
     const r = (json ?? {}) as Partial<SentinelRegisterResult>;
-    if (!r.slug || !r.hmacSecret) {
-      throw new PortHttpError(0, `copier register: missing slug/hmacSecret in response`);
+    if (!r.slug || !r.hmacSecretMask) {
+      throw new PortHttpError(0, `copier register: missing slug/hmacSecretMask in response`);
     }
+    // hmacSecret is absent on an idempotent re-register — that's expected.
     return {
       slug: r.slug,
-      hmacSecret: r.hmacSecret,
-      hmacSecretMask: r.hmacSecretMask ?? mask(r.hmacSecret),
+      hmacSecret: r.hmacSecret ?? null,
+      hmacSecretMask: r.hmacSecretMask,
+      created: r.created ?? false,
     };
   }
-}
-
-function mask(secret: string): string {
-  if (secret.length <= 8) return "****";
-  return `${secret.slice(0, 4)}…${secret.slice(-4)}`;
 }
 
 // --- SignInOnce / Keycloak realm client ------------------------------------
@@ -184,7 +185,9 @@ export function buildLivePorts(deps: {
         supportedFeatures: input.pluginSet,
         authorizedAccountExternalIds: input.originAccountExternalId ? [input.originAccountExternalId] : [],
       });
-      if (deps.onSentinelSecret) await deps.onSentinelSecret(r.slug, r.hmacSecret);
+      // Secret is only present on create/rotate; on idempotent re-register it's
+      // null and already stored from the first run — skip the hook.
+      if (r.hmacSecret && deps.onSentinelSecret) await deps.onSentinelSecret(r.slug, r.hmacSecret);
       return { slug: r.slug, hmacSecretMask: r.hmacSecretMask };
     },
     attachRiskLayer: (input) =>

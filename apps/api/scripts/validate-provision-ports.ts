@@ -40,12 +40,16 @@ const wl1: WlProvisionInput = {
 };
 
 // Mock fetch: clientExists toggles Keycloak GET behaviour for the idempotency test.
-function makeFetch(opts: { clientExists?: boolean; copierStatus?: number } = {}): FetchLike {
+function makeFetch(opts: { clientExists?: boolean; copierStatus?: number; sentinelExisting?: boolean } = {}): FetchLike {
   return async (url, init) => {
     const method = init?.method ?? "GET";
     if (/\/api\/copier\/sentinels$/.test(url) && method === "POST") {
       if (opts.copierStatus && opts.copierStatus >= 400) return resp(opts.copierStatus, { error: "boom" });
-      return resp(200, { slug: "pm-se", hmacSecret: "supersecretvalue1234", hmacSecretMask: "supe…1234" });
+      if (opts.sentinelExisting) {
+        // Idempotent re-register: metadata only, NO secret.
+        return resp(200, { ok: true, slug: "pm-se", name: "PM Sweden", hmacSecretMask: "supe…1234", created: false });
+      }
+      return resp(201, { ok: true, slug: "pm-se", name: "PM Sweden", hmacSecret: "supersecretvalue1234", hmacSecretMask: "supe…1234", created: true });
     }
     if (/\/admin\/realms\/.+\/clients\?clientId=/.test(url) && method === "GET") {
       return resp(200, opts.clientExists ? [{ clientId: "pm-se" }] : []);
@@ -66,7 +70,12 @@ async function run() {
   // Sentinel register
   const sentinel = new CopierSentinelClient({ baseUrl: "https://copier.yina.be", fetchImpl: f });
   const reg = await sentinel.register({ slug: "pm-se", name: "PM Sweden", baseUrl: "https://se.perpetualmarkets.com" });
-  check("sentinel: returns hmacSecret + mask", reg.hmacSecret === "supersecretvalue1234" && reg.hmacSecretMask === "supe…1234");
+  check("sentinel: create returns secret + mask + created", reg.hmacSecret === "supersecretvalue1234" && reg.hmacSecretMask === "supe…1234" && reg.created === true);
+
+  // Idempotent re-register: no secret, created:false.
+  const sentinelExisting = new CopierSentinelClient({ baseUrl: "https://copier.yina.be", fetchImpl: makeFetch({ sentinelExisting: true }) });
+  const reReg = await sentinelExisting.register({ slug: "pm-se", name: "PM Sweden", baseUrl: "https://se.perpetualmarkets.com" });
+  check("sentinel: re-register returns NO secret (idempotent)", reReg.hmacSecret === null && reReg.created === false && reReg.hmacSecretMask === "supe…1234");
 
   // Sentinel error normalisation
   let portErr: unknown = null;
