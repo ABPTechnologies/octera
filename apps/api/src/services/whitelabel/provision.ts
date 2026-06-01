@@ -24,6 +24,13 @@ import {
   type ProvisioningResult,
   type WlProvisionInput,
 } from "./provision-plan.js";
+import {
+  buildLivePorts,
+  CopierSentinelClient,
+  KeycloakAuthClient,
+  HealthProber,
+  type FetchLike,
+} from "./ports.js";
 
 /** Map a WhiteLabel DB row → the planning input. */
 function toProvisionInput(wl: {
@@ -69,7 +76,11 @@ function toProvisionInput(wl: {
  * auth wiring) are obvious and individually testable.
  */
 function livePorts(gigtechCustomerId: string): ProvisioningPorts {
-  return {
+  const env = process.env;
+  const f: FetchLike = (globalThis as { fetch: FetchLike }).fetch;
+
+  return buildLivePorts({
+    // Real gig.tech cloudspace create (mock id when gig.tech is in mock mode).
     async createCloudspace(input, idempotencyKey) {
       const cs = await gigtech.createCloudspace(
         gigtechCustomerId,
@@ -78,30 +89,32 @@ function livePorts(gigtechCustomerId: string): ProvisioningPorts {
       );
       return { cloudspaceId: cs.cloudspace_id, location: cs.location ?? input.vcsRegion };
     },
-    async deployBotTrader(input) {
-      // Phase 4: deploy the BotTrader template into the cloudspace (container
-      // deploy + per-WL config injection). Returns the public URL.
+    // Container-image deploy into the cloudspace is the remaining gig.tech
+    // compute step (Phase 4). For now ensure the public URL; wire the compute
+    // deploy here when the gig.tech container API + image are available.
+    async deploy(input) {
       const sub = input.subdomain ?? input.slug;
       return { url: `https://${sub}.${input.baseDomain ?? "perpetualmarkets.com"}` };
     },
-    async registerSentinel(input) {
-      // Phase 4: POST to the YINA Copier sentinel-registration endpoint and
-      // capture the one-time HMAC secret into the WL's sealed secret.
-      return { slug: input.copierSentinelSlug ?? input.slug, hmacSecretMask: "pending" };
+    sentinel: new CopierSentinelClient({
+      baseUrl: env.COPIER_BASE_URL ?? "https://copier.yina.be",
+      token: env.COPIER_API_TOKEN,
+      fetchImpl: f,
+    }),
+    auth: new KeycloakAuthClient({
+      baseUrl: env.SIO_KEYCLOAK_BASE ?? "https://signinonce.octera.cloud",
+      realm: env.SIO_REALM ?? "abp",
+      adminToken: env.SIO_ADMIN_TOKEN ?? "",
+      fetchImpl: f,
+    }),
+    health: new HealthProber({ fetchImpl: f }),
+    // Persist the one-time sentinel HMAC secret into the per-VCS sealed secret.
+    async onSentinelSecret(slug, _secret) {
+      // Phase 4: write `_secret` into the WL's sealed secret store (never DB).
+      // Recorded here so the wiring point is explicit.
+      void slug;
     },
-    async attachRiskLayer(input) {
-      // Phase 4: register routing into the shared risk layer (yina-trader).
-      return { policy: input.riskRoutingPolicy };
-    },
-    async wireAuth(input) {
-      // Phase 4: create/confirm the SignInOnce realm client + CID Global link.
-      return { realmClientId: input.sioRealmClientId ?? input.slug };
-    },
-    async healthcheck() {
-      // Phase 4: real probes (VCS reachable, sentinel handshake, federation).
-      return { ok: true, detail: "stub healthcheck — real probes land in Phase 4" };
-    },
-  };
+  });
 }
 
 export interface ProvisionOptions {
