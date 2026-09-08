@@ -18,6 +18,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { captureException } from '../lib/sentry.js';
 import { getStripe, isStripeMockMode } from '../lib/stripe.js';
 import { env } from '../lib/env.js';
+import { depositDocument } from '../integrations/ordersignup.js';
 
 export const stripeRoutes: FastifyPluginAsync = async (app) => {
   // Override JSON parsing within this encapsulated subtree to keep the raw
@@ -104,7 +105,7 @@ export const stripeRoutes: FastifyPluginAsync = async (app) => {
  */
 async function handleStripeEvent(
   event: import('stripe').Stripe.Event,
-  log: { info: (obj: object, msg: string) => void }
+  log: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void }
 ): Promise<void> {
   log.info(
     { event_id: event.id, event_type: event.type, livemode: event.livemode },
@@ -112,13 +113,54 @@ async function handleStripeEvent(
   );
 
   switch (event.type) {
-    case 'checkout.session.completed':
+    case 'checkout.session.completed': {
       // TODO: provision the purchased resource (domain registration, hosting plan, etc).
-      // Object: event.data.object as Stripe.Checkout.Session
+      // Also deposit an order confirmation into the customer's OrderSignup vault.
+      const s = event.data.object as import('stripe').Stripe.Checkout.Session;
+      const email = s.customer_details?.email ?? s.customer_email ?? undefined;
+      if (email) {
+        const amount = typeof s.amount_total === 'number' ? (s.amount_total / 100).toFixed(2) : undefined;
+        void depositDocument(
+          {
+            ownerEmail: email,
+            kind: 'ORDER',
+            title: 'Octera order confirmation',
+            counterparty: 'Octera',
+            externalRef: `octera-checkout-${s.id}`,
+            metadata: { stripeSessionId: s.id, amount, currency: s.currency ?? undefined },
+          },
+          log,
+        );
+      }
       break;
-    case 'invoice.paid':
+    }
+    case 'invoice.paid': {
       // TODO: mark the corresponding Octera invoice as paid in our DB + audit.
+      // Deposit the invoice (with its PDF) into the customer's OrderSignup vault.
+      const inv = event.data.object as import('stripe').Stripe.Invoice;
+      const email = inv.customer_email ?? undefined;
+      if (email) {
+        void depositDocument(
+          {
+            ownerEmail: email,
+            kind: 'INVOICE',
+            title: inv.number ? `Octera invoice ${inv.number}` : 'Octera invoice',
+            counterparty: 'Octera',
+            externalRef: `octera-invoice-${inv.id}`,
+            // Prefer the durable hosted-invoice URL; fall back to the raw PDF.
+            sourceUrl: inv.invoice_pdf ?? inv.hosted_invoice_url ?? undefined,
+            effectiveDate: new Date((inv.created ?? Date.now() / 1000) * 1000).toISOString().slice(0, 10),
+            metadata: {
+              stripeInvoiceId: inv.id,
+              amountPaid: typeof inv.amount_paid === 'number' ? (inv.amount_paid / 100).toFixed(2) : undefined,
+              currency: inv.currency ?? undefined,
+            },
+          },
+          log,
+        );
+      }
       break;
+    }
     case 'invoice.payment_failed':
       // TODO: surface failed-payment state on the customer's account, send email.
       break;
