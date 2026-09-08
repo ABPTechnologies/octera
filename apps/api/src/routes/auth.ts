@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../lib/env.js';
 import { AuthError, changePassword, login, logout, rotateRefreshToken, signAccessToken, signup } from '../services/auth.service.js';
 import { prisma } from '@octera/db';
+import { depositDocument } from '../integrations/ordersignup.js';
 
 const REFRESH_COOKIE = 'octera_rt';
 
@@ -40,6 +41,22 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         ipAddress: req.ip,
       });
       const accessToken = signAccessToken(app, user);
+
+      // Best-effort: file an "account opened" terms document into the new
+      // customer's OrderSignup vault. Fire-and-forget — never blocks signup.
+      void depositDocument(
+        {
+          ownerEmail: user.email,
+          kind: 'TERMS',
+          title: 'Octera account — Terms of Service',
+          counterparty: 'Octera',
+          externalRef: `octera-account-${user.id}`,
+          sourceUrl: `${env.WEB_ORIGIN}/legal/terms`,
+          effectiveDate: new Date().toISOString().slice(0, 10),
+          metadata: { event: 'account_opened', userId: user.id },
+        },
+        req.log,
+      );
 
       reply.setCookie(REFRESH_COOKIE, refreshToken, cookieOpts);
       return { accessToken, user: { id: user.id, email: user.email, role: user.role, fullName: user.fullName } };

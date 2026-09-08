@@ -17,6 +17,20 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(30),
 
+  // ── SignInOnce (Keycloak realm `signinonce`) + CID Global ──────────────────
+  // Estate-standard identity. When KEYCLOAK_ISSUER is set, the API verifies SIO
+  // Bearer tokens against the realm JWKS (and provisions/links the local User);
+  // the legacy local-JWT path stays as a fallback during the transition. Leave
+  // KEYCLOAK_ISSUER blank to keep local-JWT-only (no behaviour change).
+  KEYCLOAK_ISSUER: z.string().default(''),
+  KEYCLOAK_AUDIENCE: z.string().optional(),
+  KEYCLOAK_CLIENT_ID: z.string().default('octera-portal'),
+  KEYCLOAK_ADMIN_ROLE: z.string().default('octera-admin'),
+  // Local-only dev bypass: accept X-Dev-User (a keycloakId) without a real token.
+  AUTH_DEV_BYPASS: z.string().default('false').transform((v) => v === 'true'),
+  // CID Global base URL. Blank → CID profile sync is skipped (auth still works).
+  CID_API_URL: z.string().default(''),
+
   WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
   COOKIE_DOMAIN: z.string().optional(),
 
@@ -49,11 +63,26 @@ const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
 
+  // Inbound UTIT VPS provisioning handoff (routes/handoff.ts). Shared HMAC
+  // secret with UTIT's OCTERA_HANDOFF_SECRET. The active-callback back to UTIT
+  // uses OCTERA_WEBHOOK_SECRET (UTIT's inbound secret) + UTIT_WEBHOOK_URL.
+  // All optional → handoff 503s (disabled) until set.
+  OCTERA_HANDOFF_SECRET: z.string().optional(),
+  OCTERA_WEBHOOK_SECRET: z.string().optional(),
+  UTIT_WEBHOOK_URL: z.string().url().optional(),
+  GIGTECH_CUSTOMER_ID: z.string().optional(),
+  GIGTECH_DEFAULT_REGION: z.string().optional(),
+
   RESEND_API_KEY: z.string().optional(),
   // EMAIL_FROM supports the "Name <addr>" header format, not strict email only
   EMAIL_FROM: z.string().min(3).default('Octera <noreply@octera.net>'),
 
   SENTRY_DSN: z.string().optional(),
+
+  // OrderSignup — Octera deposits account/order/invoice documents into the
+  // customer's central vault. Both required to enable; absent = feature off.
+  ORDERSIGNUP_INGEST_URL: z.string().url().optional(),
+  ORDERSIGNUP_INGEST_TOKEN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

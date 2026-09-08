@@ -31,9 +31,21 @@ model User {
   id                String   @id @default(cuid())
   email             String   @unique
   emailVerified     DateTime?
-  passwordHash      String
+  // Nullable now: SignInOnce (SIO) users authenticate via Keycloak, not a local
+  // password. Legacy local-login users keep their hash during the transition.
+  passwordHash      String?
   fullName          String?
   role              UserRole @default(USER)
+
+  // ── SignInOnce + CID Global identity (added with the SIO auth migration) ──
+  // keycloakId = the SIO `sub`; set on provision, or linked to an existing
+  // local user by email on first SIO login. cid* are a cache of CID Global's
+  // canonical KYC, refreshed lazily by syncCidProfile.
+  keycloakId        String?  @unique
+  cidId             String?
+  kycLevel          Int      @default(0)
+  verified          Boolean  @default(false)
+  cidSyncedAt       DateTime?
 
   // Granular permissions — matches the Base44 `permissions` object.
   // Stored as JSON; shape is validated by Zod in packages/shared.
@@ -41,6 +53,10 @@ model User {
 
   // Stripe customer ID for billing
   stripeCustomerId  String?  @unique
+
+  // gig.tech (VCO) customer this user maps to — multi-tenant self-care scope.
+  // When set, the customer's invoices / SSL / hosting are shown in the portal.
+  gigtechCustomerId String?
 
   // Relations
   domains           Domain[]

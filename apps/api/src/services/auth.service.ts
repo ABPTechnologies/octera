@@ -1,8 +1,82 @@
 import argon2 from 'argon2';
 import { randomBytes } from 'node:crypto';
 import { prisma, UserRole } from '@octera/db';
+import type { User } from '@octera/db';
 import { env } from '../lib/env.js';
 import type { FastifyInstance } from 'fastify';
+import { mapRoleFromClaims, type KeycloakClaims } from '../lib/keycloak.js';
+import { createCidClient } from '../lib/cid.js';
+
+// ── SignInOnce + CID Global provisioning ─────────────────────────────────────
+// Realm role → our UserRole, highest precedence first.
+const SIO_ROLE_MAP: ReadonlyArray<readonly [string, UserRole]> = [
+  [env.KEYCLOAK_ADMIN_ROLE, UserRole.ADMIN],
+  ['octera-broker', UserRole.BROKER],
+  ['octera-client', UserRole.CLIENT],
+];
+
+const CID_SYNC_INTERVAL_MS = 60 * 60 * 1000; // refresh the CID cache at most hourly
+
+/**
+ * Find or create the local User for a verified SIO token. Idempotent — safe on
+ * every authenticated request. Transition-aware: an existing LOCAL (password)
+ * user with the same email is LINKED (keycloakId set) rather than duplicated.
+ */
+export async function findOrProvisionUser(claims: KeycloakClaims): Promise<User> {
+  const role = mapRoleFromClaims(claims, SIO_ROLE_MAP, UserRole.USER);
+  const email = (claims.email ?? `${claims.sub}@no-email.local`).toLowerCase().trim();
+  const fullName = claims.name ?? claims.preferred_username ?? null;
+
+  // 1. Already linked by SIO subject → keep role/email in sync with the realm.
+  const byKeycloak = await prisma.user.findUnique({ where: { keycloakId: claims.sub } });
+  if (byKeycloak) {
+    if (byKeycloak.role !== role || byKeycloak.email !== email) {
+      return prisma.user.update({ where: { id: byKeycloak.id }, data: { role, email } });
+    }
+    return byKeycloak;
+  }
+
+  // 2. Transition: link an existing local user with the same email.
+  const byEmail = await prisma.user.findUnique({ where: { email } });
+  if (byEmail) {
+    return prisma.user.update({
+      where: { id: byEmail.id },
+      data: { keycloakId: claims.sub, role },
+    });
+  }
+
+  // 3. New SIO-native user (no local password).
+  return prisma.user.create({
+    data: { keycloakId: claims.sub, email, fullName, role, notificationPrefs: { create: {} } },
+  });
+}
+
+/**
+ * Lazily refresh the user's cached CID profile. No-op when CID is unconfigured
+ * or synced within the interval. Never throws into the request path — a CID
+ * outage must not 500 an otherwise-authenticated call.
+ */
+export async function syncCidProfile(user: User, accessToken: string): Promise<User> {
+  if (!env.CID_API_URL) return user;
+  const fresh =
+    user.cidSyncedAt && Date.now() - user.cidSyncedAt.getTime() < CID_SYNC_INTERVAL_MS;
+  if (fresh) return user;
+  try {
+    const cid = createCidClient({ baseUrl: env.CID_API_URL });
+    const profile = await cid.fetchProfile(accessToken);
+    return prisma.user.update({
+      where: { id: user.id },
+      data: {
+        cidId: profile.cidId,
+        kycLevel: profile.kycLevel,
+        verified: profile.verified,
+        cidSyncedAt: new Date(),
+      },
+    });
+  } catch {
+    return user;
+  }
+}
 
 const REFRESH_TOKEN_BYTES = 48;
 
