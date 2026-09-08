@@ -14,10 +14,12 @@ import { authPlugin } from './middleware/auth.js';
 import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/users.js';
 import { domainRoutes } from './routes/domains.js';
+import { accountRoutes } from './routes/account.js';
 import { healthRoutes } from './routes/health.js';
 import { vcoRoutes } from './routes/vco.js';
 import { whiteLabelRoutes } from './routes/whitelabel.js';
 import { stripeRoutes } from './routes/stripe.js';
+import { handoffRoutes } from './routes/handoff.js';
 import { closeQueues } from './jobs/index.js';
 import { GigtechError } from './integrations/gigtech.js';
 
@@ -62,9 +64,13 @@ async function start() {
   await app.register(authRoutes, { prefix: '/v1/auth' });
   await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(domainRoutes, { prefix: '/v1/domains' });
+  await app.register(accountRoutes, { prefix: '/v1/account' });
   await app.register(vcoRoutes, { prefix: '/v1/vco' });
   await app.register(whiteLabelRoutes, { prefix: '/v1/whitelabels' });
   await app.register(stripeRoutes, { prefix: '/v1/stripe' });
+  // Inbound partner handoffs (UTIT VPS provisioning). Full path
+  // /api/handoff/utit-provision-vps — HMAC-verified per-route.
+  await app.register(handoffRoutes, { prefix: '/api/handoff' });
 
   // 404 handler
   app.setNotFoundHandler((req, reply) => {

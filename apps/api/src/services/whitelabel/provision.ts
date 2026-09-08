@@ -89,12 +89,44 @@ function livePorts(gigtechCustomerId: string): ProvisioningPorts {
       );
       return { cloudspaceId: cs.cloudspace_id, location: cs.location ?? input.vcsRegion };
     },
-    // Container-image deploy into the cloudspace is the remaining gig.tech
-    // compute step (Phase 4). For now ensure the public URL; wire the compute
-    // deploy here when the gig.tech container API + image are available.
-    async deploy(input) {
+    // Real container-image deploy: drive the Octera Cloud Launch API's
+    // bottrader-clone action (createVm + cloud-init Docker + compose up + Caddy
+    // auto-TLS). The Launch route returns 202 immediately and provisions in the
+    // background. When WHITELABEL_LAUNCH_URL/TOKEN are unset we return just the
+    // URL (plan/preview / no-launch environments).
+    async deploy(input, cloudspaceId) {
       const sub = input.subdomain ?? input.slug;
-      return { url: `https://${sub}.${input.baseDomain ?? "perpetualmarkets.com"}` };
+      const base = input.baseDomain ?? "perpetualmarkets.com";
+      const domain = `${sub}.${base}`;
+      const url = `https://${domain}`;
+      const launchUrl = env.WHITELABEL_LAUNCH_URL;
+      const launchToken = env.WHITELABEL_LAUNCH_SERVICE_TOKEN;
+      if (!launchUrl || !launchToken) return { url };
+      const res = await f(new URL('/api/provision/bottrader-clone', launchUrl).toString(), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${launchToken}`,
+        },
+        body: JSON.stringify({
+          cloudspaceId,
+          domain,
+          vmName: input.slug,
+          customerId: input.gigtechCustomerId,
+          brand: { slug: input.slug, name: input.displayName },
+          oidc: input.sioRealmClientId
+            ? { issuer: env.SIO_KEYCLOAK_BASE, clientId: input.sioRealmClientId }
+            : undefined,
+          sultHandoffSecret: env.SULT_HANDOFF_SECRET,
+          cycloneBaseUrl: env.CYCLONE_BASE_URL,
+          addDns: true,
+        }),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`bottrader launch → ${res.status} ${t.slice(0, 180)}`);
+      }
+      return { url };
     },
     sentinel: new CopierSentinelClient({
       baseUrl: env.COPIER_BASE_URL ?? "https://copier.yina.be",
